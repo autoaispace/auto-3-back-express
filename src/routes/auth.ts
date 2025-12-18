@@ -26,7 +26,15 @@ if (!SITE_URL) {
   throw new Error('SITE_URL environment variable is required');
 }
 
-const REDIRECT_URI = `${SITE_URL}/auth/callback`;
+// 确保 SITE_URL 没有尾部斜杠，然后构建 redirect URI
+const cleanSiteUrl = SITE_URL.replace(/\/$/, '');
+const REDIRECT_URI = `${cleanSiteUrl}/auth/callback`;
+
+// 打印 redirect URI 用于调试（仅在开发环境）
+if (process.env.NODE_ENV !== 'production') {
+  console.log('🔐 Google OAuth Redirect URI:', REDIRECT_URI);
+  console.log('📝 Make sure this URI is registered in Google Cloud Console');
+}
 
 // Configure Passport Google Strategy
 passport.use(
@@ -160,6 +168,9 @@ router.get(
         if (user.avatar) {
           redirectUrl.searchParams.set('avatar', encodeURIComponent(user.avatar));
         }
+
+        console.log('✅ Login successful, redirecting to:', redirectUrl.toString());
+        console.log('👤 User info:', { email: user.email, name: user.name, id: user.id, hasAvatar: !!user.avatar });
 
         res.redirect(redirectUrl.toString());
       } catch (error) {
