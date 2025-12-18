@@ -125,9 +125,15 @@ app.listen(PORT, async () => {
   
   // Connect to MongoDB
   try {
-    await connectDatabase();
+    const db = await connectDatabase();
+    console.log('✅ MongoDB connection established');
+    
+    // Test MongoDB connection by checking collections
+    const collections = await db.listCollections().toArray();
+    console.log('📚 Available collections:', collections.map(c => c.name));
   } catch (error) {
-    console.error('Failed to connect to database:', error);
+    console.error('❌ Failed to connect to database:', error);
+    console.error('⚠️  Server will continue but database operations may fail');
   }
 });
 

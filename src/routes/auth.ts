@@ -46,23 +46,41 @@ passport.use(
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
+        console.log('🔐 Google OAuth callback received');
         const { id, displayName, emails, photos } = profile;
         const email = emails?.[0]?.value;
         const avatar = photos?.[0]?.value;
 
+        console.log('📧 Google profile data:', { 
+          email, 
+          displayName, 
+          googleId: id, 
+          hasAvatar: !!avatar 
+        });
+
         if (!email) {
+          console.error('❌ No email found in Google profile');
           return done(new Error('No email found in Google profile'), undefined);
         }
 
-        // Check if user exists in Supabase first
-        const { data: existingUser } = await supabaseAdmin.auth.admin.getUserByEmail(email);
-        
-        let supabaseUserId: string;
+        // Try to find existing user by listing users and filtering by email
+        // Note: Supabase Admin API doesn't have getUserByEmail, so we use listUsers
+        let supabaseUserId: string | null = null;
 
-        if (existingUser?.user) {
-          // User exists in Supabase
-          supabaseUserId = existingUser.user.id;
-        } else {
+        try {
+          const { data: usersList, error: listError } = await supabaseAdmin.auth.admin.listUsers();
+          
+          if (!listError && usersList?.users) {
+            const existingUser = usersList.users.find(u => u.email === email);
+            if (existingUser) {
+              supabaseUserId = existingUser.id;
+            }
+          }
+        } catch (error) {
+          console.warn('Error listing users, will try to create new user:', error);
+        }
+
+        if (!supabaseUserId) {
           // New user - create in Supabase
           const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
             email,
@@ -83,36 +101,66 @@ passport.use(
           supabaseUserId = newUser.user.id;
         }
 
+        if (!supabaseUserId) {
+          return done(new Error('Failed to get or create Supabase user ID'), undefined);
+        }
+
         // Save/Update user in MongoDB
-        const db = await getDatabase();
-        const usersCollection = db.collection('users');
+        try {
+          console.log('💾 Saving user to MongoDB...');
+          const db = await getDatabase();
+          const usersCollection = db.collection('users');
 
-        await usersCollection.updateOne(
-          { email },
-          {
-            $set: {
-              email,
-              name: displayName,
-              avatar: avatar,
-              googleId: id,
-              supabaseUserId,
-              lastLogin: new Date(),
-              updatedAt: new Date(),
-            },
-            $setOnInsert: {
-              createdAt: new Date(),
-            },
-          },
-          { upsert: true }
-        );
+          const userData = {
+            email,
+            name: displayName,
+            avatar: avatar,
+            googleId: id,
+            supabaseUserId,
+            lastLogin: new Date(),
+            updatedAt: new Date(),
+          };
 
-        return done(null, {
+          const result = await usersCollection.updateOne(
+            { email },
+            {
+              $set: userData,
+              $setOnInsert: {
+                createdAt: new Date(),
+              },
+            },
+            { upsert: true }
+          );
+
+          console.log('✅ MongoDB save result:', {
+            matchedCount: result.matchedCount,
+            modifiedCount: result.modifiedCount,
+            upsertedCount: result.upsertedCount,
+            upsertedId: result.upsertedId,
+          });
+
+          // Verify the user was saved
+          const savedUser = await usersCollection.findOne({ email });
+          if (savedUser) {
+            console.log('✅ User verified in MongoDB:', savedUser);
+          } else {
+            console.error('❌ User not found in MongoDB after save!');
+          }
+        } catch (dbError) {
+          console.error('❌ MongoDB save error:', dbError);
+          // Don't fail the login if MongoDB save fails, but log it
+        }
+
+        const userObject = {
           id: supabaseUserId,
           email,
           name: displayName,
           avatar,
           googleId: id,
-        });
+        };
+
+        console.log('✅ Passport strategy completed, returning user:', userObject);
+        return done(null, userObject);
       } catch (error) {
         console.error('Passport strategy error:', error);
         return done(error, undefined);
@@ -140,20 +188,31 @@ router.get(
   passport.authenticate('google', { failureRedirect: `${SITE_URL}/login?error=auth_failed` }),
   async (req: Request, res: Response) => {
     try {
+      console.log('🔄 OAuth callback handler started');
+      console.log('📋 Request user:', req.user);
+      console.log('📋 Request session:', req.session);
+      
       const user = req.user as any;
 
       if (!user) {
+        console.error('❌ No user in request after authentication');
         return res.redirect(`${SITE_URL}/login?error=no_user`);
       }
 
+      console.log('✅ User found in request:', user);
+
       // Verify user exists in Supabase
       try {
+        console.log('🔍 Verifying user in Supabase, user.id:', user.id);
         const { data: supabaseUserData, error: userError } = await supabaseAdmin.auth.admin.getUserById(user.id);
         
         if (userError || !supabaseUserData?.user) {
-          console.error('Get Supabase user error:', userError);
+          console.error('❌ Get Supabase user error:', userError);
+          console.error('❌ Supabase user data:', supabaseUserData);
           return res.redirect(`${SITE_URL}/login?error=user_not_found`);
         }
+
+        console.log('✅ User verified in Supabase:', supabaseUserData.user.email);
 
         // Create a custom session token for the user
         // In production, you might want to use Supabase's built-in session management
@@ -162,15 +221,30 @@ router.get(
         
         // Redirect to frontend with user info
         const redirectUrl = new URL(`${SITE_URL}/auth/success`);
+        
+        // Ensure all required fields are present
+        if (!user.email || !user.id) {
+          console.error('❌ Missing required user fields:', { email: user.email, id: user.id });
+          return res.redirect(`${SITE_URL}/login?error=missing_user_data`);
+        }
+        
         redirectUrl.searchParams.set('email', user.email);
-        redirectUrl.searchParams.set('name', encodeURIComponent(user.name || ''));
+        redirectUrl.searchParams.set('name', user.name ? encodeURIComponent(user.name) : '');
         redirectUrl.searchParams.set('id', user.id);
         if (user.avatar) {
           redirectUrl.searchParams.set('avatar', encodeURIComponent(user.avatar));
         }
 
         console.log('✅ Login successful, redirecting to:', redirectUrl.toString());
-        console.log('👤 User info:', { email: user.email, name: user.name, id: user.id, hasAvatar: !!user.avatar });
+        console.log('👤 User info being sent:', { 
+          email: user.email, 
+          name: user.name, 
+          id: user.id, 
+          avatar: user.avatar,
+          hasAvatar: !!user.avatar 
+        });
+        console.log('🔗 Full redirect URL:', redirectUrl.toString());
+        console.log('📋 URL search params:', redirectUrl.searchParams.toString());
 
         res.redirect(redirectUrl.toString());
       } catch (error) {
@@ -246,6 +320,34 @@ router.post('/logout', (req: Request, res: Response) => {
       message: 'Logged out successfully'
     });
   });
+});
+
+// Test endpoint to check MongoDB connection and list users
+router.get('/test/db', async (req: Request, res: Response) => {
+  try {
+    const db = await getDatabase();
+    const usersCollection = db.collection('users');
+    const users = await usersCollection.find({}).limit(10).toArray();
+    
+    res.json({
+      success: true,
+      message: 'Database connection successful',
+      userCount: users.length,
+      users: users.map(u => ({
+        email: u.email,
+        name: u.name,
+        createdAt: u.createdAt,
+        lastLogin: u.lastLogin
+      }))
+    });
+  } catch (error) {
+    console.error('Database test error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Database connection failed',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
 });
 
 export { router as authRouter };

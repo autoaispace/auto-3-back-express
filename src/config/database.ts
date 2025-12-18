@@ -17,6 +17,10 @@ export async function connectDatabase(): Promise<Db> {
     return db;
   }
 
+  if (!mongoUri) {
+    throw new Error('MONGODB_URI environment variable is required');
+  }
+
   try {
     client = new MongoClient(mongoUri);
     await client.connect();
