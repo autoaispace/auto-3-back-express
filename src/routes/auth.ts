@@ -4,6 +4,8 @@ import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { supabaseAdmin } from '../config/supabase';
 import { getDatabase } from '../config/database';
 import dotenv from 'dotenv';
+import https from 'https';
+import http from 'http';
 
 dotenv.config();
 
@@ -28,23 +30,46 @@ if (!SITE_URL) {
 }
 
 // 构建 redirect URI
-// 在开发环境中使用本地地址，生产环境使用配置的域名
+// 优先使用 BACKEND_URL，如果没有则使用 SITE_URL，最后才使用本地地址
 let REDIRECT_URI;
-if (process.env.NODE_ENV === 'development') {
-  // 开发环境：使用本地地址
-  REDIRECT_URI = 'http://localhost:8080/api/auth/callback';
-} else {
-  // 生产环境：使用配置的域名
-  const cleanSiteUrl = SITE_URL.replace(/\/$/, '');
-  const backendBaseUrl = BACKEND_URL_ENV ? BACKEND_URL_ENV.replace(/\/$/, '') : cleanSiteUrl;
+
+if (BACKEND_URL_ENV) {
+  // 如果明确设置了后端URL，使用它
+  const backendBaseUrl = BACKEND_URL_ENV.replace(/\/$/, '');
   REDIRECT_URI = `${backendBaseUrl}/api/auth/callback`;
+} else if (SITE_URL && !SITE_URL.includes('localhost')) {
+  // 如果SITE_URL不是localhost，使用它（适用于公网部署）
+  const cleanSiteUrl = SITE_URL.replace(/\/$/, '');
+  REDIRECT_URI = `${cleanSiteUrl}/api/auth/callback`;
+} else {
+  // 否则使用本地地址（纯本地开发）
+  REDIRECT_URI = 'http://localhost:8080/api/auth/callback';
 }
 
-// 打印 redirect URI 用于调试（仅在开发环境）
-if (process.env.NODE_ENV !== 'production') {
-  console.log('🔐 Google OAuth Redirect URI:', REDIRECT_URI);
-  console.log('📝 Make sure this URI is registered in Google Cloud Console');
+// 配置HTTP/HTTPS代理和超时
+const httpAgent = new http.Agent({
+  timeout: 30000, // 30秒超时
+  keepAlive: true,
+});
+
+const httpsAgent = new https.Agent({
+  timeout: 30000, // 30秒超时
+  keepAlive: true,
+});
+
+// 设置全局代理（如果环境变量中有配置）
+if (process.env.HTTP_PROXY || process.env.HTTPS_PROXY) {
+  console.log('🌐 Using proxy configuration');
+  console.log('HTTP_PROXY:', process.env.HTTP_PROXY);
+  console.log('HTTPS_PROXY:', process.env.HTTPS_PROXY);
 }
+
+// 打印 redirect URI 用于调试
+console.log('🔐 Google OAuth Redirect URI:', REDIRECT_URI);
+console.log('📝 Make sure this URI is registered in Google Cloud Console');
+console.log('🌍 Environment:', process.env.NODE_ENV);
+console.log('🔗 Site URL:', SITE_URL);
+console.log('🔗 Backend URL:', BACKEND_URL_ENV);
 
 // Configure Passport Google Strategy
 passport.use(
@@ -53,6 +78,8 @@ passport.use(
       clientID: GOOGLE_CLIENT_ID,
       clientSecret: GOOGLE_CLIENT_SECRET,
       callbackURL: REDIRECT_URI,
+      // 添加代理配置（如果需要）
+      proxy: process.env.HTTP_PROXY || process.env.HTTPS_PROXY || false,
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
@@ -214,18 +241,28 @@ router.get('/google', passport.authenticate('google', { scope: ['profile', 'emai
 // Google OAuth callback
 router.get(
   '/callback',
-  passport.authenticate('google', { failureRedirect: `${SITE_URL}/login?error=auth_failed` }),
+  (req: Request, res: Response, next) => {
+    console.log('🔄 OAuth callback received, starting authentication...');
+    console.log('📋 Request URL:', req.url);
+    console.log('📋 Request query:', req.query);
+    
+    passport.authenticate('google', { 
+      failureRedirect: `${SITE_URL}/?error=auth_failed`,
+      failureMessage: true 
+    })(req, res, next);
+  },
   async (req: Request, res: Response) => {
     try {
       console.log('🔄 OAuth callback handler started');
       console.log('📋 Request user:', req.user);
-      console.log('📋 Request session:', req.session);
+      console.log('📋 Request session ID:', req.sessionID);
       
       const user = req.user as any;
 
       if (!user) {
         console.error('❌ No user in request after authentication');
-        return res.redirect(`${SITE_URL}/login?error=no_user`);
+        console.error('📋 Session:', req.session);
+        return res.redirect(`${SITE_URL}/?error=no_user`);
       }
 
       console.log('✅ User found in request:', user);
@@ -277,7 +314,14 @@ router.get(
         console.log('🔗 Full redirect URL:', redirectUrl.toString());
         console.log('📋 URL search params:', redirectUrl.searchParams.toString());
 
-        res.redirect(redirectUrl.toString());
+        // 确保重定向正常工作
+        res.writeHead(302, {
+          'Location': redirectUrl.toString(),
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        });
+        res.end();
       } catch (error) {
         console.error('Error verifying Supabase user:', error);
         return res.redirect(`${SITE_URL}/login?error=verification_failed`);
@@ -383,6 +427,22 @@ router.get('/test/db', async (req: Request, res: Response) => {
       error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
+});
+
+// Test endpoint for callback debugging
+router.get('/test/callback', (req: Request, res: Response) => {
+  console.log('🧪 Test callback endpoint hit');
+  console.log('📋 Query params:', req.query);
+  console.log('📋 Headers:', req.headers);
+  
+  res.json({
+    success: true,
+    message: 'Callback test endpoint working',
+    query: req.query,
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV,
+    siteUrl: process.env.SITE_URL
+  });
 });
 
 // Test endpoint to simulate user creation
