@@ -13,6 +13,7 @@ const router = Router();
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const SITE_URL = process.env.SITE_URL;
+const BACKEND_URL_ENV = process.env.BACKEND_URL;
 
 if (!GOOGLE_CLIENT_ID) {
   throw new Error('GOOGLE_CLIENT_ID environment variable is required');
@@ -26,9 +27,18 @@ if (!SITE_URL) {
   throw new Error('SITE_URL environment variable is required');
 }
 
-// 确保 SITE_URL 没有尾部斜杠，然后构建 redirect URI
-const cleanSiteUrl = SITE_URL.replace(/\/$/, '');
-const REDIRECT_URI = `${cleanSiteUrl}/auth/callback`;
+// 构建 redirect URI
+// 在开发环境中使用本地地址，生产环境使用配置的域名
+let REDIRECT_URI;
+if (process.env.NODE_ENV === 'development') {
+  // 开发环境：使用本地地址
+  REDIRECT_URI = 'http://localhost:8080/api/auth/callback';
+} else {
+  // 生产环境：使用配置的域名
+  const cleanSiteUrl = SITE_URL.replace(/\/$/, '');
+  const backendBaseUrl = BACKEND_URL_ENV ? BACKEND_URL_ENV.replace(/\/$/, '') : cleanSiteUrl;
+  REDIRECT_URI = `${backendBaseUrl}/api/auth/callback`;
+}
 
 // 打印 redirect URI 用于调试（仅在开发环境）
 if (process.env.NODE_ENV !== 'production') {
@@ -121,6 +131,8 @@ passport.use(
             updatedAt: new Date(),
           };
 
+          console.log('📝 User data to save:', userData);
+
           const result = await usersCollection.updateOne(
             { email },
             {
@@ -142,12 +154,29 @@ passport.use(
           // Verify the user was saved
           const savedUser = await usersCollection.findOne({ email });
           if (savedUser) {
-            console.log('✅ User verified in MongoDB:', savedUser);
+            console.log('✅ User verified in MongoDB:', {
+              _id: savedUser._id,
+              email: savedUser.email,
+              name: savedUser.name,
+              googleId: savedUser.googleId,
+              supabaseUserId: savedUser.supabaseUserId,
+              createdAt: savedUser.createdAt,
+              lastLogin: savedUser.lastLogin
+            });
           } else {
             console.error('❌ User not found in MongoDB after save!');
           }
+
+          // Also verify total user count
+          const userCount = await usersCollection.countDocuments();
+          console.log('📊 Total users in MongoDB:', userCount);
         } catch (dbError) {
           console.error('❌ MongoDB save error:', dbError);
+          console.error('❌ MongoDB error details:', {
+            name: dbError instanceof Error ? dbError.name : 'Unknown',
+            message: dbError instanceof Error ? dbError.message : 'Unknown error',
+            stack: dbError instanceof Error ? dbError.stack : 'No stack trace'
+          });
           // Don't fail the login if MongoDB save fails, but log it
         }
 
@@ -220,17 +249,19 @@ router.get(
         // Frontend should use this to create a Supabase session
         
         // Redirect to frontend with user info
-        const redirectUrl = new URL(`${SITE_URL}/auth/success`);
+        // 使用根路径而不是 /auth/success，避免路由冲突
+        const redirectUrl = new URL(`${SITE_URL}/`);
         
         // Ensure all required fields are present
         if (!user.email || !user.id) {
           console.error('❌ Missing required user fields:', { email: user.email, id: user.id });
-          return res.redirect(`${SITE_URL}/login?error=missing_user_data`);
+          return res.redirect(`${SITE_URL}/?error=missing_user_data`);
         }
         
         redirectUrl.searchParams.set('email', user.email);
         redirectUrl.searchParams.set('name', user.name ? encodeURIComponent(user.name) : '');
         redirectUrl.searchParams.set('id', user.id);
+        redirectUrl.searchParams.set('auth_success', 'true');
         if (user.avatar) {
           redirectUrl.searchParams.set('avatar', encodeURIComponent(user.avatar));
         }
@@ -334,10 +365,14 @@ router.get('/test/db', async (req: Request, res: Response) => {
       message: 'Database connection successful',
       userCount: users.length,
       users: users.map(u => ({
+        _id: u._id,
         email: u.email,
         name: u.name,
+        googleId: u.googleId,
+        supabaseUserId: u.supabaseUserId,
         createdAt: u.createdAt,
-        lastLogin: u.lastLogin
+        lastLogin: u.lastLogin,
+        updatedAt: u.updatedAt
       }))
     });
   } catch (error) {
@@ -345,6 +380,49 @@ router.get('/test/db', async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       message: 'Database connection failed',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Test endpoint to simulate user creation
+router.post('/test/create-user', async (req: Request, res: Response) => {
+  try {
+    const { email, name } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+
+    const db = await getDatabase();
+    const usersCollection = db.collection('users');
+
+    const userData = {
+      email,
+      name: name || 'Test User',
+      googleId: 'test_' + Date.now(),
+      supabaseUserId: 'test_supabase_' + Date.now(),
+      lastLogin: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const result = await usersCollection.insertOne(userData);
+    
+    res.json({
+      success: true,
+      message: 'Test user created successfully',
+      userId: result.insertedId,
+      userData
+    });
+  } catch (error) {
+    console.error('Test user creation error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create test user',
       error: error instanceof Error ? error.message : 'Unknown error'
     });
   }

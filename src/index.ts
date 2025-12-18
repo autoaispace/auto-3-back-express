@@ -98,7 +98,8 @@ app.get('/health', (req: Request, res: Response) => {
 
 // API Routes
 app.use('/api/subscribe', subscribeRouter);
-app.use('/auth', authRouter);
+app.use('/api/auth', authRouter); // 使用 /api/auth 前缀，避免被前端路由拦截
+app.use('/auth', authRouter); // 保留 /auth 用于向后兼容（如果需要）
 
 // 404 handler
 app.use((req: Request, res: Response) => {
