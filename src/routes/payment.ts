@@ -68,7 +68,7 @@ router.post('/create', async (req: Request, res: Response) => {
     });
 
     // 创建 Whop 支付链接
-    const checkoutUrl = await paymentService.createWhopPayment(payment);
+    const checkoutUrl = await paymentService.generateWhopCheckoutUrl(payment);
 
     res.json({
       success: true,
@@ -204,8 +204,14 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
     const signature = req.headers['whop-signature'] as string;
     const payload = JSON.stringify(req.body);
 
-    // 验证 webhook 签名
-    if (!signature || !verifyWhopSignature(payload, signature)) {
+    console.log('📨 Received Whop webhook:', {
+      headers: req.headers,
+      body: req.body,
+      signature: signature ? signature.substring(0, 20) + '...' : 'none'
+    });
+
+    // 验证 webhook 签名（如果配置了）
+    if (signature && !verifyWhopSignature(payload, signature)) {
       console.error('❌ Invalid Whop webhook signature');
       return res.status(401).json({
         success: false,
@@ -214,8 +220,6 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
     }
 
     const event = req.body;
-    console.log('📨 Received Whop webhook:', event);
-
     const db = await getDatabase();
     const paymentService = new PaymentService(db);
 
@@ -223,24 +227,46 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
     switch (event.type) {
       case 'payment.completed':
       case 'checkout.completed':
-        const paymentData = event.data;
-        const paymentId = paymentData.metadata?.payment_id;
-        const whopPaymentId = paymentData.id;
-
-        if (paymentId && whopPaymentId) {
-          const success = await paymentService.completePayment(paymentId, whopPaymentId);
+      case 'payment.succeeded':
+        console.log('✅ Processing payment completion event');
+        
+        // 从 webhook 数据中提取 metadata
+        const eventData = event.data || event;
+        const metadata = eventData.metadata || {};
+        
+        console.log('📋 Event metadata:', metadata);
+        
+        // 如果有 metadata，使用新方法处理
+        if (metadata.payment_id) {
+          const success = await paymentService.completePaymentByMetadata(metadata);
           
           if (success) {
-            console.log('✅ Payment completed successfully:', paymentId);
+            console.log('✅ Payment completed successfully via metadata');
           } else {
-            console.error('❌ Failed to complete payment:', paymentId);
+            console.error('❌ Failed to complete payment via metadata');
+          }
+        } else {
+          // 兼容旧方法
+          const paymentData = eventData;
+          const paymentId = paymentData.metadata?.payment_id;
+          const whopPaymentId = paymentData.id;
+
+          if (paymentId && whopPaymentId) {
+            const success = await paymentService.completePayment(paymentId, whopPaymentId);
+            
+            if (success) {
+              console.log('✅ Payment completed successfully via legacy method');
+            } else {
+              console.error('❌ Failed to complete payment via legacy method');
+            }
+          } else {
+            console.error('❌ Missing payment identifiers in webhook data');
           }
         }
         break;
 
       case 'payment.failed':
       case 'checkout.failed':
-        // 处理支付失败
         console.log('❌ Payment failed:', event.data);
         break;
 
@@ -251,7 +277,7 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
     res.json({ success: true });
 
   } catch (error) {
-    console.error('Webhook error:', error);
+    console.error('❌ Webhook error:', error);
     res.status(500).json({
       success: false,
       message: 'Webhook processing failed'

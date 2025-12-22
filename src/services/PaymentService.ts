@@ -1,6 +1,6 @@
 import { Db, ObjectId } from 'mongodb';
-import { Payment, PaymentStatus, CreatePaymentRequest, WhopPaymentResponse } from '../models/Payment';
-import { WHOP_CONFIG, getCreditPackage } from '../config/whop';
+import { Payment, PaymentStatus, CreatePaymentRequest } from '../models/Payment';
+import { getCreditPackage, generateWhopCheckoutUrl } from '../config/whop';
 import { CreditsService } from './CreditsService';
 
 export class PaymentService {
@@ -48,39 +48,18 @@ export class PaymentService {
     return createdPayment;
   }
 
-  // 创建 Whop 支付链接
-  async createWhopPayment(payment: Payment): Promise<string> {
+  // 生成 Whop 支付链接
+  async generateWhopCheckoutUrl(payment: Payment): Promise<string> {
     try {
-      // 这里需要调用 Whop API 创建支付链接
-      // 由于我们没有实际的 Whop API 密钥，这里模拟创建过程
-      
-      const whopPayload = {
-        amount: Math.round(payment.amount * 100), // 转换为分
-        currency: payment.currency.toLowerCase(),
-        customer_email: payment.userEmail,
-        success_url: payment.metadata?.successUrl || `${process.env.SITE_URL}/payment/success`,
-        cancel_url: payment.metadata?.cancelUrl || `${process.env.SITE_URL}/payment/cancel`,
-        metadata: {
-          payment_id: payment._id?.toString(),
-          user_id: payment.userId,
-          package_id: payment.packageId,
-          credits: payment.credits.toString(),
-          bonus_credits: (payment.bonusCredits || 0).toString()
-        }
-      };
+      console.log('🔄 Generating Whop checkout URL for payment:', payment._id);
 
-      console.log('🔄 Creating Whop payment with payload:', whopPayload);
-
-      // 模拟 Whop API 调用
-      // 在实际实现中，这里应该调用真实的 Whop API
-      const mockWhopResponse: WhopPaymentResponse = {
-        id: `whop_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        checkout_url: `https://whop.com/checkout/${payment._id}?amount=${payment.amount}&credits=${payment.credits}`,
-        status: 'pending',
-        amount: payment.amount,
-        currency: payment.currency,
-        metadata: whopPayload.metadata
-      };
+      // 使用 Whop 产品链接生成 checkout URL
+      const checkoutUrl = generateWhopCheckoutUrl(
+        payment._id?.toString() || '',
+        payment.userId,
+        payment.packageId,
+        payment.userEmail
+      );
 
       // 更新支付记录
       const paymentsCollection = this.db.collection<Payment>('payments');
@@ -88,23 +67,103 @@ export class PaymentService {
         { _id: new ObjectId(payment._id as string) },
         {
           $set: {
-            whopPaymentId: mockWhopResponse.id,
-            whopCheckoutUrl: mockWhopResponse.checkout_url,
+            whopCheckoutUrl: checkoutUrl,
             updatedAt: new Date()
           }
         }
       );
 
-      console.log('✅ Created Whop payment:', mockWhopResponse);
-      return mockWhopResponse.checkout_url;
+      console.log('✅ Generated Whop checkout URL:', checkoutUrl);
+      return checkoutUrl;
 
     } catch (error) {
-      console.error('❌ Failed to create Whop payment:', error);
-      throw new Error('Failed to create payment link');
+      console.error('❌ Failed to generate Whop checkout URL:', error);
+      throw new Error('Failed to generate payment link');
     }
   }
 
-  // 处理支付完成
+  // 处理支付完成（通过 webhook metadata）
+  async completePaymentByMetadata(metadata: Record<string, any>): Promise<boolean> {
+    const paymentsCollection = this.db.collection<Payment>('payments');
+    
+    try {
+      const paymentId = metadata.payment_id;
+      const userId = metadata.user_id;
+      const userEmail = metadata.user_email;
+      const packageId = metadata.package_id;
+      const credits = parseInt(metadata.credits || '0');
+      const bonusCredits = parseInt(metadata.bonus_credits || '0');
+
+      console.log('🔄 Processing payment completion:', {
+        paymentId,
+        userId,
+        userEmail,
+        packageId,
+        credits,
+        bonusCredits
+      });
+
+      if (!paymentId) {
+        console.error('❌ No payment_id in metadata');
+        return false;
+      }
+
+      // 查找支付记录
+      const payment = await paymentsCollection.findOne({
+        _id: new ObjectId(paymentId)
+      });
+
+      if (!payment) {
+        console.error('❌ Payment not found:', paymentId);
+        return false;
+      }
+
+      if (payment.status === PaymentStatus.COMPLETED) {
+        console.log('⚠️ Payment already completed:', payment._id);
+        return true;
+      }
+
+      // 更新支付状态
+      await paymentsCollection.updateOne(
+        { _id: payment._id },
+        {
+          $set: {
+            status: PaymentStatus.COMPLETED,
+            completedAt: new Date(),
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      // 给用户添加积分
+      const totalCredits = credits + bonusCredits;
+      const updatedCredits = await this.creditsService.addCredits(
+        userId || payment.userId,
+        userEmail || payment.userEmail,
+        totalCredits,
+        `购买积分包：${payment.packageName}`
+      );
+
+      if (updatedCredits) {
+        console.log('✅ Payment completed and credits added:', {
+          paymentId: payment._id,
+          userId: userId || payment.userId,
+          credits: totalCredits,
+          newBalance: updatedCredits.credits
+        });
+        return true;
+      } else {
+        console.error('❌ Failed to add credits for payment:', payment._id);
+        return false;
+      }
+
+    } catch (error) {
+      console.error('❌ Error completing payment:', error);
+      return false;
+    }
+  }
+
+  // 处理支付完成（原有方法，保持兼容性）
   async completePayment(paymentId: string, whopPaymentId: string): Promise<boolean> {
     const paymentsCollection = this.db.collection<Payment>('payments');
     
