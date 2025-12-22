@@ -30,7 +30,7 @@ app.use(cors({
   origin: (origin, callback) => {
     // 允许没有 origin 的请求（如移动应用或 Postman）
     if (!origin) return callback(null, true);
-    
+
     // 检查 origin 是否在允许列表中
     if (CORS_ORIGINS.includes(origin) || CORS_ORIGINS.includes('*')) {
       callback(null, true);
@@ -88,6 +88,30 @@ const limiter = rateLimit({
 
 app.use('/api/', limiter);
 
+// Root endpoint - API 信息
+app.get('/', (req: Request, res: Response) => {
+  res.status(200).json({
+    name: 'InkGenius Pro Backend API',
+    version: '1.0.0',
+    status: 'running',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    endpoints: {
+      health: '/health',
+      auth: {
+        google: '/api/auth/google',
+        me: '/api/auth/me',
+        logout: '/api/auth/logout'
+      },
+      api: {
+        subscribe: '/api/subscribe',
+        credits: '/api/credits'
+      }
+    },
+    documentation: 'https://github.com/your-repo/auto-3-back-express'
+  });
+});
+
 // Health check endpoint
 app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({
@@ -125,12 +149,12 @@ app.listen(PORT, async () => {
   console.log(`🚀 Server is running on port ${PORT}`);
   console.log(`📡 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🌐 CORS Origins: ${CORS_ORIGINS.join(', ')}`);
-  
+
   // Connect to MongoDB
   try {
     const db = await connectDatabase();
     console.log('✅ MongoDB connection established');
-    
+
     // Test MongoDB connection by checking collections
     const collections = await db.listCollections().toArray();
     console.log('📚 Available collections:', collections.map(c => c.name));

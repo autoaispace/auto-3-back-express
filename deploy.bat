@@ -21,7 +21,7 @@ if %errorlevel% neq 0 (
 REM 提交代码到 Git
 echo 📝 提交代码到 Git...
 git add .
-git commit -m "Deploy: %date% %time%"
+git commit -m "Deploy: %date% %time% - Fix root route"
 
 REM 推送到 GitHub
 echo ⬆️ 推送到 GitHub...
@@ -31,6 +31,9 @@ if %errorlevel% equ 0 (
     echo ✅ 代码已推送到 GitHub
     echo 🌐 Vercel 将自动开始部署
     echo 📊 查看部署状态：https://vercel.com/dashboard
+    echo.
+    echo 🧪 部署完成后，可以运行以下命令测试端点：
+    echo node test-endpoints.js
 ) else (
     echo ❌ 推送失败，请检查 Git 配置
     pause
