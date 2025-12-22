@@ -8,9 +8,7 @@ export const WHOP_CONFIG = {
   API_KEY: process.env.WHOP_API_KEY,
   WEBHOOK_SECRET: process.env.WHOP_WEBHOOK_SECRET,
   COMPANY_ID: process.env.WHOP_COMPANY_ID,
-  
-  // Whop 产品链接
-  PRODUCT_BASE_URL: 'https://whop.com/8429d376-ddb2-4fb6-bebf-b81b25deff04/test-7d-00b2/',
+  PLAN_ID: process.env.WHOP_PLAN_ID,
   
   // API 端点
   BASE_URL: 'https://api.whop.com/api/v2',
@@ -22,6 +20,9 @@ export const WHOP_CONFIG = {
     }
     if (!this.WEBHOOK_SECRET) {
       console.warn('⚠️ WHOP_WEBHOOK_SECRET not set');
+    }
+    if (!this.PLAN_ID) {
+      console.warn('⚠️ WHOP_PLAN_ID not set');
     }
   }
 };
@@ -63,27 +64,73 @@ export function getCreditPackage(packageId: string) {
   return CREDIT_PACKAGES.find(pkg => pkg.id === packageId);
 }
 
-// 生成 Whop Checkout URL with metadata
-export function generateWhopCheckoutUrl(paymentId: string, userId: string, packageId: string, userEmail: string): string {
+// 创建 Whop Checkout Session
+export async function createWhopCheckoutSession(
+  paymentId: string, 
+  userId: string, 
+  packageId: string, 
+  userEmail: string,
+  successUrl?: string,
+  cancelUrl?: string
+): Promise<string> {
   const pkg = getCreditPackage(packageId);
   if (!pkg) {
     throw new Error('Invalid package ID');
   }
 
-  // 构建带 metadata 的 URL
-  const baseUrl = WHOP_CONFIG.PRODUCT_BASE_URL;
-  const params = new URLSearchParams({
-    // Whop 会将这些参数作为 metadata 传递给 webhook
-    payment_id: paymentId,
-    user_id: userId,
-    user_email: userEmail,
-    package_id: packageId,
-    credits: pkg.credits.toString(),
-    bonus_credits: (pkg.bonus || 0).toString(),
-    amount: pkg.price.toString()
-  });
+  if (!WHOP_CONFIG.API_KEY || !WHOP_CONFIG.PLAN_ID) {
+    throw new Error('Whop API key or Plan ID not configured');
+  }
 
-  return `${baseUrl}?${params.toString()}`;
+  try {
+    console.log('🔄 Creating Whop checkout session...');
+    
+    const checkoutData = {
+      plan_id: WHOP_CONFIG.PLAN_ID,
+      customer_email: userEmail,
+      success_url: successUrl || `${process.env.SITE_URL}/payment/success`,
+      cancel_url: cancelUrl || `${process.env.SITE_URL}/payment/cancel`,
+      metadata: {
+        payment_id: paymentId,
+        user_id: userId,
+        user_email: userEmail,
+        package_id: packageId,
+        credits: pkg.credits.toString(),
+        bonus_credits: (pkg.bonus || 0).toString(),
+        amount: pkg.price.toString()
+      }
+    };
+
+    console.log('📤 Whop checkout data:', checkoutData);
+
+    const response = await fetch(`${WHOP_CONFIG.BASE_URL}/checkout/sessions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${WHOP_CONFIG.API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(checkoutData)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Whop API error:', response.status, errorText);
+      throw new Error(`Whop API error: ${response.status} ${response.statusText}`);
+    }
+
+    const result = await response.json() as any;
+    console.log('✅ Whop checkout session created:', result);
+
+    if (result && result.checkout_url) {
+      return result.checkout_url;
+    } else {
+      throw new Error('No checkout URL returned from Whop API');
+    }
+
+  } catch (error) {
+    console.error('❌ Failed to create Whop checkout session:', error);
+    throw error;
+  }
 }
 
 // 验证 Whop webhook 签名

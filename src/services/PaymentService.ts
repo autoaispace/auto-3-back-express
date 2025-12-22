@@ -1,6 +1,6 @@
 import { Db, ObjectId } from 'mongodb';
 import { Payment, PaymentStatus, CreatePaymentRequest } from '../models/Payment';
-import { getCreditPackage, generateWhopCheckoutUrl } from '../config/whop';
+import { getCreditPackage, createWhopCheckoutSession } from '../config/whop';
 import { CreditsService } from './CreditsService';
 
 export class PaymentService {
@@ -48,17 +48,19 @@ export class PaymentService {
     return createdPayment;
   }
 
-  // 生成 Whop 支付链接
-  async generateWhopCheckoutUrl(payment: Payment): Promise<string> {
+  // 创建 Whop 支付链接
+  async createWhopCheckoutUrl(payment: Payment): Promise<string> {
     try {
-      console.log('🔄 Generating Whop checkout URL for payment:', payment._id);
+      console.log('🔄 Creating Whop checkout session for payment:', payment._id);
 
-      // 使用 Whop 产品链接生成 checkout URL
-      const checkoutUrl = generateWhopCheckoutUrl(
+      // 使用 Whop API 创建 checkout session
+      const checkoutUrl = await createWhopCheckoutSession(
         payment._id?.toString() || '',
         payment.userId,
         payment.packageId,
-        payment.userEmail
+        payment.userEmail,
+        payment.metadata?.successUrl,
+        payment.metadata?.cancelUrl
       );
 
       // 更新支付记录
@@ -73,12 +75,12 @@ export class PaymentService {
         }
       );
 
-      console.log('✅ Generated Whop checkout URL:', checkoutUrl);
+      console.log('✅ Created Whop checkout URL:', checkoutUrl);
       return checkoutUrl;
 
     } catch (error) {
-      console.error('❌ Failed to generate Whop checkout URL:', error);
-      throw new Error('Failed to generate payment link');
+      console.error('❌ Failed to create Whop checkout URL:', error);
+      throw new Error('Failed to create payment link');
     }
   }
 

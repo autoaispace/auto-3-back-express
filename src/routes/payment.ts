@@ -1,9 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { getDatabase } from '../config/database';
 import { PaymentService } from '../services/PaymentService';
-import { CREDIT_PACKAGES, WHOP_CONFIG, verifyWhopSignature } from '../config/whop';
+import { CREDIT_PACKAGES, verifyWhopSignature } from '../config/whop';
 import { supabaseAdmin } from '../config/supabase';
-import crypto from 'crypto';
 
 const router = Router();
 
@@ -68,7 +67,7 @@ router.post('/create', async (req: Request, res: Response) => {
     });
 
     // 创建 Whop 支付链接
-    const checkoutUrl = await paymentService.generateWhopCheckoutUrl(payment);
+    const checkoutUrl = await paymentService.createWhopCheckoutUrl(payment);
 
     res.json({
       success: true,
