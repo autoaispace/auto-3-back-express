@@ -78,15 +78,18 @@ export async function createWhopCheckoutSession(
     throw new Error('Invalid package ID');
   }
 
-  if (!WHOP_CONFIG.API_KEY || !WHOP_CONFIG.PLAN_ID) {
-    throw new Error('Whop API key or Plan ID not configured');
+  if (!WHOP_CONFIG.API_KEY || !WHOP_CONFIG.PLAN_ID || !WHOP_CONFIG.COMPANY_ID) {
+    throw new Error('Whop API key, Plan ID, or Company ID not configured');
   }
 
   try {
     console.log('🔄 Creating Whop checkout session...');
+    console.log('🏢 Using Company ID:', WHOP_CONFIG.COMPANY_ID);
+    console.log('📋 Using Plan ID:', WHOP_CONFIG.PLAN_ID);
     
     const checkoutData = {
       plan_id: WHOP_CONFIG.PLAN_ID,
+      company_id: WHOP_CONFIG.COMPANY_ID,
       customer_email: userEmail,
       success_url: successUrl || `${process.env.SITE_URL}/payment/success`,
       cancel_url: cancelUrl || `${process.env.SITE_URL}/payment/cancel`,
@@ -97,7 +100,8 @@ export async function createWhopCheckoutSession(
         package_id: packageId,
         credits: pkg.credits.toString(),
         bonus_credits: (pkg.bonus || 0).toString(),
-        amount: pkg.price.toString()
+        amount: pkg.price.toString(),
+        company_id: WHOP_CONFIG.COMPANY_ID
       }
     };
 
