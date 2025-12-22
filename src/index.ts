@@ -9,6 +9,7 @@ import cookieParser from 'cookie-parser';
 import passport from 'passport';
 import { subscribeRouter } from './routes/subscribe';
 import { authRouter } from './routes/auth';
+import { creditsRouter } from './routes/credits';
 import { connectDatabase, closeDatabase } from './config/database';
 
 // Load environment variables
@@ -99,6 +100,7 @@ app.get('/health', (req: Request, res: Response) => {
 // API Routes
 app.use('/api/subscribe', subscribeRouter);
 app.use('/api/auth', authRouter); // 使用 /api/auth 前缀，避免被前端路由拦截
+app.use('/api/credits', creditsRouter); // 积分系统路由
 app.use('/auth', authRouter); // 保留 /auth 用于向后兼容（如果需要）
 
 // 404 handler

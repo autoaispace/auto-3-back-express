@@ -3,6 +3,7 @@ import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { supabaseAdmin } from '../config/supabase';
 import { getDatabase } from '../config/database';
+import { CreditsService } from '../services/CreditsService';
 import dotenv from 'dotenv';
 import https from 'https';
 import http from 'http';
@@ -190,6 +191,21 @@ passport.use(
               createdAt: savedUser.createdAt,
               lastLogin: savedUser.lastLogin
             });
+
+            // 创建或更新用户积分记录
+            try {
+              console.log('💰 Creating/updating user credits...');
+              const creditsService = new CreditsService(db);
+              const userCredits = await creditsService.createUserCredits(
+                savedUser._id.toString(),
+                savedUser.name || displayName || 'Unknown User',
+                savedUser.email
+              );
+              console.log('✅ User credits created/updated:', userCredits);
+            } catch (creditsError) {
+              console.error('❌ Failed to create user credits:', creditsError);
+              // 不影响登录流程，只记录错误
+            }
           } else {
             console.error('❌ User not found in MongoDB after save!');
           }
