@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output (Vercel will build from source)
+dist/
+
+# Development files
+.env.local
+.env.development
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Testing
+coverage/
+.nyc_output/
+
+# Documentation
+README.md
+SETUP.md
+VERCEL_DEPLOY.md

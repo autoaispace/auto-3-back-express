@@ -89,11 +89,11 @@ passport.use(
         const email = emails?.[0]?.value;
         const avatar = photos?.[0]?.value;
 
-        console.log('📧 Google profile data:', { 
-          email, 
-          displayName, 
-          googleId: id, 
-          hasAvatar: !!avatar 
+        console.log('📧 Google profile data:', {
+          email,
+          displayName,
+          googleId: id,
+          hasAvatar: !!avatar
         });
 
         if (!email) {
@@ -107,7 +107,7 @@ passport.use(
 
         try {
           const { data: usersList, error: listError } = await supabaseAdmin.auth.admin.listUsers();
-          
+
           if (!listError && usersList?.users) {
             const existingUser = usersList.users.find(u => u.email === email);
             if (existingUser) {
@@ -261,10 +261,10 @@ router.get(
     console.log('🔄 OAuth callback received, starting authentication...');
     console.log('📋 Request URL:', req.url);
     console.log('📋 Request query:', req.query);
-    
-    passport.authenticate('google', { 
+
+    passport.authenticate('google', {
       failureRedirect: `${SITE_URL}/?error=auth_failed`,
-      failureMessage: true 
+      failureMessage: true
     })(req, res, next);
   },
   async (req: Request, res: Response) => {
@@ -272,7 +272,7 @@ router.get(
       console.log('🔄 OAuth callback handler started');
       console.log('📋 Request user:', req.user);
       console.log('📋 Request session ID:', req.sessionID);
-      
+
       const user = req.user as any;
 
       if (!user) {
@@ -287,7 +287,7 @@ router.get(
       try {
         console.log('🔍 Verifying user in Supabase, user.id:', user.id);
         const { data: supabaseUserData, error: userError } = await supabaseAdmin.auth.admin.getUserById(user.id);
-        
+
         if (userError || !supabaseUserData?.user) {
           console.error('❌ Get Supabase user error:', userError);
           console.error('❌ Supabase user data:', supabaseUserData);
@@ -300,17 +300,17 @@ router.get(
         // In production, you might want to use Supabase's built-in session management
         // For now, we'll create a simple token and redirect to frontend
         // Frontend should use this to create a Supabase session
-        
+
         // Redirect to frontend with user info
         // 使用根路径而不是 /auth/success，避免路由冲突
         const redirectUrl = new URL(`${SITE_URL}/`);
-        
+
         // Ensure all required fields are present
         if (!user.email || !user.id) {
           console.error('❌ Missing required user fields:', { email: user.email, id: user.id });
           return res.redirect(`${SITE_URL}/?error=missing_user_data`);
         }
-        
+
         redirectUrl.searchParams.set('email', user.email);
         redirectUrl.searchParams.set('name', user.name ? encodeURIComponent(user.name) : '');
         redirectUrl.searchParams.set('id', user.id);
@@ -320,12 +320,12 @@ router.get(
         }
 
         console.log('✅ Login successful, redirecting to:', redirectUrl.toString());
-        console.log('👤 User info being sent:', { 
-          email: user.email, 
-          name: user.name, 
-          id: user.id, 
+        console.log('👤 User info being sent:', {
+          email: user.email,
+          name: user.name,
+          id: user.id,
           avatar: user.avatar,
-          hasAvatar: !!user.avatar 
+          hasAvatar: !!user.avatar
         });
         console.log('🔗 Full redirect URL:', redirectUrl.toString());
         console.log('📋 URL search params:', redirectUrl.searchParams.toString());
@@ -353,7 +353,7 @@ router.get(
 router.get('/me', async (req: Request, res: Response) => {
   try {
     const authHeader = req.headers.authorization;
-    
+
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({
         success: false,
@@ -362,7 +362,7 @@ router.get('/me', async (req: Request, res: Response) => {
     }
 
     const token = authHeader.substring(7);
-    
+
     // Verify token with Supabase
     const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
 
@@ -419,7 +419,7 @@ router.get('/test/db', async (req: Request, res: Response) => {
     const db = await getDatabase();
     const usersCollection = db.collection('users');
     const users = await usersCollection.find({}).limit(10).toArray();
-    
+
     res.json({
       success: true,
       message: 'Database connection successful',
@@ -450,7 +450,7 @@ router.get('/test/callback', (req: Request, res: Response) => {
   console.log('🧪 Test callback endpoint hit');
   console.log('📋 Query params:', req.query);
   console.log('📋 Headers:', req.headers);
-  
+
   res.json({
     success: true,
     message: 'Callback test endpoint working',
@@ -465,7 +465,7 @@ router.get('/test/callback', (req: Request, res: Response) => {
 router.post('/test/create-user', async (req: Request, res: Response) => {
   try {
     const { email, name } = req.body;
-    
+
     if (!email) {
       return res.status(400).json({
         success: false,
@@ -487,7 +487,7 @@ router.post('/test/create-user', async (req: Request, res: Response) => {
     };
 
     const result = await usersCollection.insertOne(userData);
-    
+
     res.json({
       success: true,
       message: 'Test user created successfully',
