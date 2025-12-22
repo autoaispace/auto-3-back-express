@@ -1,0 +1,548 @@
+{
+  "info": {
+    "name": "InkGenius Pro Backend API",
+    "description": "InkGenius Pro 后端 API 接口集合",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://inkgeniusapi.digworldai.com",
+      "description": "生产环境"
+    },
+    {
+      "url": "http://localhost:8080",
+      "description": "开发环境"
+    }
+  ],
+  "folders": [
+    {
+      "name": "基础接口",
+      "description": "基础功能接口"
+    },
+    {
+      "name": "认证接口",
+      "description": "用户认证相关接口"
+    },
+    {
+      "name": "邮件订阅",
+      "description": "邮件订阅功能"
+    },
+    {
+      "name": "积分系统",
+      "description": "用户积分管理"
+    },
+    {
+      "name": "测试接口",
+      "description": "开发测试用接口"
+    }
+  ],
+  "apis": [
+    {
+      "name": "获取API信息",
+      "method": "GET",
+      "path": "/",
+      "folder": "基础接口",
+      "description": "获取API基本信息和可用端点列表",
+      "responses": [
+        {
+          "name": "成功响应",
+          "code": 200,
+          "contentType": "application/json",
+          "jsonSchema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "timestamp": {
+                "type": "string"
+              },
+              "environment": {
+                "type": "string"
+              },
+              "endpoints": {
+                "type": "object"
+              },
+              "documentation": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "健康检查",
+      "method": "GET",
+      "path": "/health",
+      "folder": "基础接口",
+      "description": "检查服务器运行状态",
+      "responses": [
+        {
+          "name": "成功响应",
+          "code": 200,
+          "contentType": "application/json",
+          "jsonSchema": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string"
+              },
+              "timestamp": {
+                "type": "string"
+              },
+              "environment": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Google OAuth登录",
+      "method": "GET",
+      "path": "/api/auth/google",
+      "folder": "认证接口",
+      "description": "发起Google OAuth登录流程，会重定向到Google登录页面"
+    },
+    {
+      "name": "Google OAuth回调",
+      "method": "GET",
+      "path": "/api/auth/callback",
+      "folder": "认证接口",
+      "description": "Google OAuth登录回调处理"
+    },
+    {
+      "name": "获取当前用户信息",
+      "method": "GET",
+      "path": "/api/auth/me",
+      "folder": "认证接口",
+      "description": "获取当前登录用户的详细信息",
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{token}}",
+          "description": "Supabase JWT Token"
+        }
+      ],
+      "responses": [
+        {
+          "name": "成功响应",
+          "code": 200,
+          "contentType": "application/json",
+          "jsonSchema": {
+            "type": "object",
+            "properties": {
+              "success": {
+                "type": "boolean"
+              },
+              "user": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "avatar": {
+                    "type": "string"
+                  },
+                  "googleId": {
+                    "type": "string"
+                  },
+                  "createdAt": {
+                    "type": "string"
+                  },
+                  "lastLogin": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "未授权",
+          "code": 401,
+          "contentType": "application/json",
+          "jsonSchema": {
+            "type": "object",
+            "properties": {
+              "success": {
+                "type": "boolean"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "用户登出",
+      "method": "POST",
+      "path": "/api/auth/logout",
+      "folder": "认证接口",
+      "description": "登出当前用户",
+      "responses": [
+        {
+          "name": "成功响应",
+          "code": 200,
+          "contentType": "application/json",
+          "jsonSchema": {
+            "type": "object",
+            "properties": {
+              "success": {
+                "type": "boolean"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "邮件订阅",
+      "method": "POST",
+      "path": "/api/subscribe",
+      "folder": "邮件订阅",
+      "description": "用户邮件订阅功能",
+      "contentType": "application/json",
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "用户邮箱（必填）"
+          },
+          "source": {
+            "type": "string",
+            "description": "订阅来源（可选）"
+          },
+          "pageUrl": {
+            "type": "string",
+            "description": "订阅页面URL（可选）"
+          },
+          "referrer": {
+            "type": "string",
+            "description": "来源页面（可选）"
+          }
+        },
+        "required": [
+          "email"
+        ]
+      },
+      "responses": [
+        {
+          "name": "成功响应",
+          "code": 200,
+          "contentType": "application/json",
+          "jsonSchema": {
+            "type": "object",
+            "properties": {
+              "success": {
+                "type": "boolean"
+              },
+              "message": {
+                "type": "string"
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string"
+                  },
+                  "subscribedAt": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "参数错误",
+          "code": 400,
+          "contentType": "application/json",
+          "jsonSchema": {
+            "type": "object",
+            "properties": {
+              "success": {
+                "type": "boolean"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "获取当前用户积分",
+      "method": "GET",
+      "path": "/api/credits/me",
+      "folder": "积分系统",
+      "description": "获取当前登录用户的积分信息",
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{token}}",
+          "description": "Supabase JWT Token"
+        }
+      ],
+      "responses": [
+        {
+          "name": "成功响应",
+          "code": 200,
+          "contentType": "application/json",
+          "jsonSchema": {
+            "type": "object",
+            "properties": {
+              "success": {
+                "type": "boolean"
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "_id": {
+                    "type": "string"
+                  },
+                  "userId": {
+                    "type": "string"
+                  },
+                  "userName": {
+                    "type": "string"
+                  },
+                  "userEmail": {
+                    "type": "string"
+                  },
+                  "credits": {
+                    "type": "number"
+                  },
+                  "totalEarned": {
+                    "type": "number"
+                  },
+                  "totalSpent": {
+                    "type": "number"
+                  },
+                  "createdAt": {
+                    "type": "string"
+                  },
+                  "updatedAt": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "通过邮箱获取用户积分",
+      "method": "GET",
+      "path": "/api/credits/by-email/{email}",
+      "folder": "积分系统",
+      "description": "通过邮箱获取用户积分信息",
+      "pathParams": [
+        {
+          "name": "email",
+          "description": "用户邮箱（需要URL编码）",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "获取用户积分交易记录",
+      "method": "GET",
+      "path": "/api/credits/transactions/{email}",
+      "folder": "积分系统",
+      "description": "获取用户的积分交易历史记录",
+      "pathParams": [
+        {
+          "name": "email",
+          "description": "用户邮箱（需要URL编码）",
+          "required": true
+        }
+      ],
+      "queryParams": [
+        {
+          "name": "limit",
+          "description": "返回记录数量限制，默认50",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "添加用户积分（管理员）",
+      "method": "POST",
+      "path": "/api/credits/add",
+      "folder": "积分系统",
+      "description": "管理员接口：给用户添加积分",
+      "contentType": "application/json",
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "userEmail": {
+            "type": "string",
+            "description": "用户邮箱"
+          },
+          "amount": {
+            "type": "number",
+            "description": "积分数量"
+          },
+          "description": {
+            "type": "string",
+            "description": "积分描述"
+          }
+        },
+        "required": [
+          "userEmail",
+          "amount",
+          "description"
+        ]
+      }
+    },
+    {
+      "name": "扣除用户积分（管理员）",
+      "method": "POST",
+      "path": "/api/credits/spend",
+      "folder": "积分系统",
+      "description": "管理员接口：扣除用户积分",
+      "contentType": "application/json",
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "userEmail": {
+            "type": "string",
+            "description": "用户邮箱"
+          },
+          "amount": {
+            "type": "number",
+            "description": "积分数量"
+          },
+          "description": {
+            "type": "string",
+            "description": "积分描述"
+          }
+        },
+        "required": [
+          "userEmail",
+          "amount",
+          "description"
+        ]
+      }
+    },
+    {
+      "name": "批量初始化所有用户积分",
+      "method": "POST",
+      "path": "/api/credits/initialize-all",
+      "folder": "积分系统",
+      "description": "管理员接口：为所有现有用户初始化积分记录"
+    },
+    {
+      "name": "初始化单个用户积分",
+      "method": "POST",
+      "path": "/api/credits/initialize/{email}",
+      "folder": "积分系统",
+      "description": "为指定用户初始化积分记录",
+      "pathParams": [
+        {
+          "name": "email",
+          "description": "用户邮箱（需要URL编码）",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "测试数据库连接",
+      "method": "GET",
+      "path": "/api/auth/test/db",
+      "folder": "测试接口",
+      "description": "测试MongoDB连接并获取用户列表"
+    },
+    {
+      "name": "测试回调端点",
+      "method": "GET",
+      "path": "/api/auth/test/callback",
+      "folder": "测试接口",
+      "description": "测试回调端点功能"
+    },
+    {
+      "name": "创建测试用户",
+      "method": "POST",
+      "path": "/api/auth/test/create-user",
+      "folder": "测试接口",
+      "description": "创建测试用户",
+      "contentType": "application/json",
+      "requestBody": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "用户邮箱"
+          },
+          "name": {
+            "type": "string",
+            "description": "用户姓名"
+          }
+        },
+        "required": [
+          "email"
+        ]
+      }
+    },
+    {
+      "name": "获取所有用户积分（测试）",
+      "method": "GET",
+      "path": "/api/credits/test/all",
+      "folder": "测试接口",
+      "description": "测试接口：获取所有用户积分信息"
+    }
+  ],
+  "environments": [
+    {
+      "name": "生产环境",
+      "variables": [
+        {
+          "key": "baseUrl",
+          "value": "https://inkgeniusapi.digworldai.com"
+        },
+        {
+          "key": "token",
+          "value": "",
+          "description": "Supabase JWT Token"
+        }
+      ]
+    },
+    {
+      "name": "开发环境",
+      "variables": [
+        {
+          "key": "baseUrl",
+          "value": "http://localhost:8080"
+        },
+        {
+          "key": "token",
+          "value": "",
+          "description": "Supabase JWT Token"
+        }
+      ]
+    }
+  ]
+}

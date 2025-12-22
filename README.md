@@ -5,6 +5,9 @@ Express.js backend API for InkGenius Pro application.
 ## Features
 
 - Email subscription management
+- Google OAuth authentication
+- User credits system
+- **Whop payment integration** 🆕
 - RESTful API endpoints
 - Rate limiting
 - CORS configuration
@@ -79,6 +82,38 @@ npm start
     ```
 - `POST /auth/logout` - Logout user
 
+### Payment System
+- `GET /api/payment/packages` - Get available credit packages
+- `POST /api/payment/create` - Create payment order
+  - Headers: `Authorization: Bearer <token>`
+  - Request body:
+    ```json
+    {
+      "packageId": "credits_1000",
+      "successUrl": "https://yoursite.com/success",
+      "cancelUrl": "https://yoursite.com/cancel"
+    }
+    ```
+  - Response:
+    ```json
+    {
+      "success": true,
+      "data": {
+        "paymentId": "payment-id",
+        "checkoutUrl": "https://whop.com/checkout/...",
+        "package": {
+          "id": "credits_1000",
+          "name": "1000 积分",
+          "credits": 1000,
+          "amount": 10.00,
+          "currency": "USD"
+        }
+      }
+    }
+    ```
+- `GET /api/payment/{paymentId}` - Get payment details
+- `GET /api/payment/user/history` - Get user payment history
+- `POST /api/payment/webhook/whop` - Whop webhook handler (internal)
 ### Email Subscription
 - `POST /api/subscribe` - Subscribe email to waitlist
   - Request body:
@@ -134,6 +169,9 @@ auto-3-back-express/
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | **Yes** | - |
 | `SITE_URL` | Frontend site URL | **Yes** | - |
 | `MONGODB_URI` | MongoDB connection string | **Yes** | - |
+| `WHOP_API_KEY` | Whop API key for payments | **Yes** | - |
+| `WHOP_WEBHOOK_SECRET` | Whop webhook secret | **Yes** | - |
+| `WHOP_COMPANY_ID` | Whop company ID | **Yes** | - |
 
 **Note**: All variables marked as "Required" must be set in your `.env` file. The application will throw an error on startup if any required variable is missing.
 

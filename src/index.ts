@@ -10,6 +10,7 @@ import passport from 'passport';
 import { subscribeRouter } from './routes/subscribe';
 import { authRouter } from './routes/auth';
 import { creditsRouter } from './routes/credits';
+import { paymentRouter } from './routes/payment';
 import { connectDatabase, closeDatabase } from './config/database';
 
 // Load environment variables
@@ -105,7 +106,8 @@ app.get('/', (req: Request, res: Response) => {
       },
       api: {
         subscribe: '/api/subscribe',
-        credits: '/api/credits'
+        credits: '/api/credits',
+        payment: '/api/payment'
       }
     },
     documentation: 'https://github.com/your-repo/auto-3-back-express'
@@ -125,6 +127,7 @@ app.get('/health', (req: Request, res: Response) => {
 app.use('/api/subscribe', subscribeRouter);
 app.use('/api/auth', authRouter); // 使用 /api/auth 前缀，避免被前端路由拦截
 app.use('/api/credits', creditsRouter); // 积分系统路由
+app.use('/api/payment', paymentRouter); // 支付系统路由
 app.use('/auth', authRouter); // 保留 /auth 用于向后兼容（如果需要）
 
 // 404 handler
