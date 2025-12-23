@@ -229,33 +229,27 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
         
         console.log('📋 Event metadata:', metadata);
         
-        // 处理内嵌支付 (payment.succeeded)
+        // 处理支付成功事件 - 简化版本（只有一个套餐）
         if (event.type === 'payment.succeeded') {
-          console.log('🔄 Processing payment.succeeded event...');
+          console.log('🔄 Processing payment.succeeded event (简化版本)...');
           
           // 尝试多种方式获取用户信息
           let userId = null;
           let userEmail = null;
-          let packageId = null;
-          let credits = null;
           
           // 方法1: 从 metadata 获取
-          if (metadata.user_id && metadata.user_email && metadata.package_id) {
+          if (metadata.user_id && metadata.user_email) {
             console.log('✅ 从 metadata 获取用户信息');
             userId = metadata.user_id;
             userEmail = metadata.user_email;
-            packageId = metadata.package_id;
-            credits = metadata.credits;
           }
-          // 方法2: 从 eventData 直接获取（如果 Whop 将参数放在其他地方）
-          else if (eventData.user_id && eventData.user_email && eventData.package_id) {
+          // 方法2: 从 eventData 直接获取
+          else if (eventData.user_id && eventData.user_email) {
             console.log('✅ 从 eventData 获取用户信息');
             userId = eventData.user_id;
             userEmail = eventData.user_email;
-            packageId = eventData.package_id;
-            credits = eventData.credits;
           }
-          // 方法3: 从 URL 参数获取（如果 Whop 将 URL 参数传递到 webhook）
+          // 方法3: 从 URL 参数获取
           else if (eventData.checkout_url || eventData.payment_url) {
             console.log('🔍 尝试从 URL 参数获取用户信息');
             const url = eventData.checkout_url || eventData.payment_url;
@@ -264,10 +258,8 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
                 const urlObj = new URL(url);
                 userId = urlObj.searchParams.get('metadata[user_id]') || urlObj.searchParams.get('user_id');
                 userEmail = urlObj.searchParams.get('metadata[user_email]') || urlObj.searchParams.get('user_email');
-                packageId = urlObj.searchParams.get('metadata[package_id]') || urlObj.searchParams.get('package_id');
-                credits = urlObj.searchParams.get('metadata[credits]') || urlObj.searchParams.get('credits');
                 
-                if (userId && userEmail && packageId) {
+                if (userId && userEmail) {
                   console.log('✅ 从 URL 参数获取用户信息成功');
                 }
               } catch (e) {
@@ -276,37 +268,54 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
             }
           }
           
-          // 如果仍然没有用户信息，尝试使用默认值进行测试
-          if (!userId || !userEmail || !packageId) {
-            console.log('⚠️ 无法获取完整用户信息，使用默认值进行测试');
-            console.log('当前获取到的信息:', { userId, userEmail, packageId, credits });
+          // 如果无法获取用户信息，记录错误并跳过处理
+          if (!userId || !userEmail) {
+            console.error('❌ 无法获取用户信息，无法处理支付');
+            console.log('当前获取到的信息:', { userId, userEmail });
+            console.log('📋 完整事件数据:', JSON.stringify(event, null, 2));
             
-            // 使用默认测试用户信息
-            userId = userId || '6948dc4897532de886ec876d';
-            userEmail = userEmail || 'test@example.com';
-            packageId = packageId || 'credits_1000';
-            credits = credits || '1000';
+            // 记录未处理的支付事件，便于手动处理
+            try {
+              const unprocessedPayment = {
+                whopPaymentId: eventData.id || `whop_${Date.now()}`,
+                eventType: event.type,
+                eventData: eventData,
+                metadata: metadata,
+                status: 'missing_user_info',
+                createdAt: new Date(),
+                note: '缺少用户信息：无法自动处理，需要手动添加积分'
+              };
+
+              const result = await db.collection('unprocessed_payments').insertOne(unprocessedPayment);
+              console.log('📝 未处理支付已记录:', result.insertedId);
+              console.log('⚠️ 需要手动处理此支付事件 - 缺少用户信息');
+              
+            } catch (error) {
+              console.error('❌ 记录未处理支付失败:', error);
+            }
             
-            console.log('使用的默认信息:', { userId, userEmail, packageId, credits });
+            // 跳过处理，不给任何用户添加积分
+            break;
           }
           
+          console.log('✅ 确认用户信息有效:', { userId, userEmail });
+          
           try {
-            // 查找套餐信息
-            const packageInfo = CREDIT_PACKAGES.find(pkg => pkg.id === packageId);
-            if (!packageInfo) {
-              console.error('❌ Package not found:', packageId);
-              console.log('可用套餐:', CREDIT_PACKAGES.map(p => p.id));
-              break;
-            }
+            // 简化：直接使用固定的套餐信息（因为只有一个套餐）
+            const packageInfo = CREDIT_PACKAGES[0]; // 只有一个套餐，直接取第一个
+            const creditsToAdd = 1000; // 固定添加1000积分
+            
+            console.log('📦 使用套餐信息:', packageInfo);
+            console.log('💰 添加积分:', creditsToAdd);
 
             // 创建支付记录
             const paymentRecord = {
               userId: userId,
               userEmail: userEmail,
-              packageId: packageId,
+              packageId: packageInfo.id,
               packageName: packageInfo.name,
-              credits: parseInt(credits) || packageInfo.credits,
-              bonusCredits: parseInt(metadata.bonus_credits) || 0,
+              credits: creditsToAdd,
+              bonusCredits: 0,
               amount: packageInfo.price,
               currency: packageInfo.currency,
               status: 'completed',
@@ -320,8 +329,8 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
             const result = await db.collection('payments').insertOne(paymentRecord);
             console.log('💾 Payment record created:', result.insertedId);
 
-            // 更新用户积分
-            const totalCredits = paymentRecord.credits + paymentRecord.bonusCredits;
+            // 更新用户积分 - 固定添加1000积分
+            const totalCredits = creditsToAdd; // 1000积分
             
             // 使用 Supabase Admin 更新用户积分
             const { data: user, error: getUserError } = await supabaseAdmin.auth.admin.getUserById(userId);
@@ -329,6 +338,9 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
             if (getUserError || !user) {
               console.error('❌ Failed to get user:', getUserError);
               console.log('尝试的用户ID:', userId);
+              
+              // 即使获取用户失败，也记录支付成功
+              console.log('⚠️ 用户信息获取失败，但支付记录已保存');
               break;
             }
 
@@ -352,7 +364,7 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
               console.log(`✅ User credits updated: ${currentCredits} + ${totalCredits} = ${newCredits}`);
             }
 
-            console.log('✅ Payment.succeeded processed successfully');
+            console.log('✅ Payment.succeeded processed successfully (简化版本)');
             
           } catch (error) {
             console.error('❌ Error processing payment.succeeded:', error);
@@ -453,6 +465,27 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
             }
           } else {
             console.error('❌ Missing payment identifiers in webhook data');
+            
+            // 兜底处理：记录未处理的支付事件
+            console.log('🔄 Recording unprocessed payment for manual handling...');
+            try {
+              const unprocessedPayment = {
+                whopPaymentId: eventData.id || `whop_${Date.now()}`,
+                eventType: event.type,
+                eventData: eventData,
+                metadata: metadata,
+                status: 'needs_manual_processing',
+                createdAt: new Date(),
+                note: '需要手动处理：无法自动获取用户信息或支付标识符'
+              };
+
+              const result = await db.collection('unprocessed_payments').insertOne(unprocessedPayment);
+              console.log('📝 Unprocessed payment recorded:', result.insertedId);
+              console.log('⚠️ 需要手动处理此支付事件');
+              
+            } catch (error) {
+              console.error('❌ Error recording unprocessed payment:', error);
+            }
           }
         }
         break;
