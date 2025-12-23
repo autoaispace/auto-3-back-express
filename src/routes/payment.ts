@@ -315,21 +315,41 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
             
             try {
               // 通过邮箱查找系统中的用户
-              const { data: users, error } = await supabaseAdmin.auth.admin.listUsers();
+              const { data, error } = await supabaseAdmin.auth.admin.listUsers();
               
-              if (!error && users) {
-                const systemUser = users.find((u: any) => u.email === userEmail);
+              if (!error && data && data.users) {
+                const systemUser = data.users.find((u: any) => u.email === userEmail);
                 if (systemUser) {
                   systemUserId = systemUser.id;
                   console.log(`✅ 通过邮箱找到系统用户: ${userEmail} -> ${systemUserId}`);
                 } else {
                   console.log(`⚠️ 系统中未找到邮箱为 ${userEmail} 的用户`);
-                  // 保持使用Whop用户ID，但记录警告
+                  // 记录为未处理，因为无法匹配到系统用户
+                  console.log('📝 记录为未处理支付，需要手动处理');
+                  
+                  const unprocessedPayment = {
+                    whopPaymentId: eventData.id || `whop_${Date.now()}`,
+                    eventType: event.type,
+                    eventData: eventData,
+                    metadata: metadata,
+                    whopUserId: userId,
+                    userEmail: userEmail,
+                    status: 'user_not_found',
+                    createdAt: new Date(),
+                    note: `系统中未找到邮箱为 ${userEmail} 的用户，需要手动处理`
+                  };
+
+                  const result = await db.collection('unprocessed_payments').insertOne(unprocessedPayment);
+                  console.log('📝 未处理支付已记录:', result.insertedId);
+                  break;
                 }
+              } else {
+                console.error('❌ 获取用户列表失败:', error);
+                // 继续使用Whop用户ID，但会在后续步骤失败
               }
             } catch (error) {
               console.error('❌ 查找系统用户失败:', error);
-              // 继续使用Whop用户ID
+              // 继续使用Whop用户ID，但会在后续步骤失败
             }
           }
           
