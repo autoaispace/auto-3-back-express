@@ -9,10 +9,10 @@ export const WHOP_CONFIG = {
   WEBHOOK_SECRET: process.env.WHOP_WEBHOOK_SECRET,
   COMPANY_ID: process.env.WHOP_COMPANY_ID,
   PLAN_ID: process.env.WHOP_PLAN_ID,
-  
+
   // API 端点
   BASE_URL: 'https://api.whop.com/api/v2',
-  
+
   // 验证必需的环境变量
   validate() {
     if (!this.API_KEY) {
@@ -64,56 +64,50 @@ export function getCreditPackage(packageId: string) {
   return CREDIT_PACKAGES.find(pkg => pkg.id === packageId);
 }
 
-// 创建 Whop Checkout Session
-export async function createWhopCheckoutSession(
-  paymentId: string, 
-  userId: string, 
-  packageId: string, 
-  userEmail: string,
-  successUrl?: string,
-  cancelUrl?: string
-): Promise<string> {
+// 创建 Whop Checkout Configuration (内嵌支付)
+export async function createWhopCheckoutConfig(
+  userId: string,
+  packageId: string,
+  userEmail: string
+): Promise<{ sessionId: string; packageInfo: any }> {
   const pkg = getCreditPackage(packageId);
   if (!pkg) {
     throw new Error('Invalid package ID');
   }
 
-  if (!WHOP_CONFIG.API_KEY || !WHOP_CONFIG.PLAN_ID || !WHOP_CONFIG.COMPANY_ID) {
-    throw new Error('Whop API key, Plan ID, or Company ID not configured');
+  if (!WHOP_CONFIG.API_KEY || !WHOP_CONFIG.COMPANY_ID) {
+    throw new Error('Whop API key or Company ID not configured');
   }
 
   try {
-    console.log('🔄 Creating Whop checkout session...');
+    console.log('🔄 Creating Whop checkout configuration...');
     console.log('🏢 Using Company ID:', WHOP_CONFIG.COMPANY_ID);
-    console.log('📋 Using Plan ID:', WHOP_CONFIG.PLAN_ID);
-    
-    const checkoutData = {
-      plan_id: WHOP_CONFIG.PLAN_ID,
+
+    const checkoutConfigData = {
       company_id: WHOP_CONFIG.COMPANY_ID,
-      customer_email: userEmail,
-      success_url: successUrl || `${process.env.SITE_URL}/payment/success`,
-      cancel_url: cancelUrl || `${process.env.SITE_URL}/payment/cancel`,
+      plan: {
+        initial_price: pkg.price,
+        plan_type: "one_time"
+      },
       metadata: {
-        payment_id: paymentId,
         user_id: userId,
         user_email: userEmail,
         package_id: packageId,
         credits: pkg.credits.toString(),
         bonus_credits: (pkg.bonus || 0).toString(),
-        amount: pkg.price.toString(),
-        company_id: WHOP_CONFIG.COMPANY_ID
+        package_name: pkg.name
       }
     };
 
-    console.log('📤 Whop checkout data:', checkoutData);
+    console.log('📤 Whop checkout config data:', checkoutConfigData);
 
-    const response = await fetch(`${WHOP_CONFIG.BASE_URL}/checkout/sessions`, {
+    const response = await fetch(`${WHOP_CONFIG.BASE_URL}/checkout_configurations`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${WHOP_CONFIG.API_KEY}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(checkoutData)
+      body: JSON.stringify(checkoutConfigData)
     });
 
     if (!response.ok) {
@@ -123,16 +117,19 @@ export async function createWhopCheckoutSession(
     }
 
     const result = await response.json() as any;
-    console.log('✅ Whop checkout session created:', result);
+    console.log('✅ Whop checkout configuration created:', result);
 
-    if (result && result.checkout_url) {
-      return result.checkout_url;
+    if (result && result.id) {
+      return {
+        sessionId: result.id,
+        packageInfo: pkg
+      };
     } else {
-      throw new Error('No checkout URL returned from Whop API');
+      throw new Error('No session ID returned from Whop API');
     }
 
   } catch (error) {
-    console.error('❌ Failed to create Whop checkout session:', error);
+    console.error('❌ Failed to create Whop checkout configuration:', error);
     throw error;
   }
 }
@@ -149,7 +146,7 @@ export function verifyWhopSignature(payload: string, signature: string): boolean
     .createHmac('sha256', WHOP_CONFIG.WEBHOOK_SECRET)
     .update(payload)
     .digest('hex');
-  
+
   try {
     return crypto.timingSafeEqual(
       Buffer.from(signature),

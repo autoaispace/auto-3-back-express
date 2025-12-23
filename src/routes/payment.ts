@@ -22,10 +22,10 @@ router.get('/packages', async (req: Request, res: Response) => {
   }
 });
 
-// 创建支付订单
-router.post('/create', async (req: Request, res: Response) => {
+// 创建支付订单 (内嵌支付)
+router.post('/create-embedded', async (req: Request, res: Response) => {
   try {
-    const { packageId, successUrl, cancelUrl } = req.body;
+    const { packageId } = req.body;
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -54,42 +54,36 @@ router.post('/create', async (req: Request, res: Response) => {
       });
     }
 
-    const db = await getDatabase();
-    const paymentService = new PaymentService(db);
+    // 导入 createWhopCheckoutConfig 函数
+    const { createWhopCheckoutConfig } = await import('../config/whop');
 
-    // 创建支付记录
-    const payment = await paymentService.createPayment({
+    // 创建 Whop checkout configuration
+    const { sessionId, packageInfo } = await createWhopCheckoutConfig(
+      user.id,
       packageId,
-      userEmail: user.email!,
-      userId: user.id,
-      successUrl,
-      cancelUrl
-    });
-
-    // 创建 Whop 支付链接
-    const checkoutUrl = await paymentService.createWhopCheckoutUrl(payment);
+      user.email!
+    );
 
     res.json({
       success: true,
       data: {
-        paymentId: payment._id,
-        checkoutUrl,
+        sessionId,
         package: {
-          id: payment.packageId,
-          name: payment.packageName,
-          credits: payment.credits,
-          bonusCredits: payment.bonusCredits,
-          amount: payment.amount,
-          currency: payment.currency
+          id: packageInfo.id,
+          name: packageInfo.name,
+          credits: packageInfo.credits,
+          bonusCredits: packageInfo.bonus || 0,
+          amount: packageInfo.price,
+          currency: packageInfo.currency
         }
       }
     });
 
   } catch (error) {
-    console.error('Create payment error:', error);
+    console.error('Create embedded payment error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to create payment'
+      message: 'Failed to create embedded payment'
     });
   }
 });
@@ -235,8 +229,148 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
         
         console.log('📋 Event metadata:', metadata);
         
-        // 如果有 metadata，使用新方法处理
-        if (metadata.payment_id) {
+        // 处理内嵌支付 (payment.succeeded)
+        if (event.type === 'payment.succeeded' && metadata.user_id && metadata.user_email && metadata.package_id) {
+          console.log('🔄 Processing embedded payment...');
+          
+          try {
+            // 查找套餐信息
+            const packageInfo = CREDIT_PACKAGES.find(pkg => pkg.id === metadata.package_id);
+            if (!packageInfo) {
+              console.error('❌ Package not found:', metadata.package_id);
+              break;
+            }
+
+            // 创建支付记录
+            const paymentRecord = {
+              userId: metadata.user_id,
+              userEmail: metadata.user_email,
+              packageId: metadata.package_id,
+              packageName: packageInfo.name,
+              credits: parseInt(metadata.credits) || packageInfo.credits,
+              bonusCredits: parseInt(metadata.bonus_credits) || packageInfo.bonus || 0,
+              amount: packageInfo.price,
+              currency: packageInfo.currency,
+              status: 'completed',
+              whopPaymentId: eventData.id || `whop_${Date.now()}`,
+              completedAt: new Date(),
+              createdAt: new Date(),
+              updatedAt: new Date()
+            };
+
+            // 保存支付记录
+            const result = await db.collection('payments').insertOne(paymentRecord);
+            console.log('💾 Payment record created:', result.insertedId);
+
+            // 更新用户积分
+            const totalCredits = paymentRecord.credits + paymentRecord.bonusCredits;
+            
+            // 使用 Supabase Admin 更新用户积分
+            const { data: user, error: getUserError } = await supabaseAdmin.auth.admin.getUserById(metadata.user_id);
+            
+            if (getUserError || !user) {
+              console.error('❌ Failed to get user:', getUserError);
+              break;
+            }
+
+            // 更新用户的 user_metadata
+            const currentCredits = user.user.user_metadata?.credits || 0;
+            const newCredits = currentCredits + totalCredits;
+
+            const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
+              metadata.user_id,
+              {
+                user_metadata: {
+                  ...user.user.user_metadata,
+                  credits: newCredits
+                }
+              }
+            );
+
+            if (updateError) {
+              console.error('❌ Failed to update user credits:', updateError);
+            } else {
+              console.log(`✅ User credits updated: ${currentCredits} + ${totalCredits} = ${newCredits}`);
+            }
+
+            console.log('✅ Embedded payment processed successfully');
+            
+          } catch (error) {
+            console.error('❌ Error processing embedded payment:', error);
+          }
+        }
+        // 处理直接链接支付（兼容之前的实现）
+        else if (metadata.user_id && metadata.user_email && metadata.package_id && metadata.credits) {
+          console.log('🔄 Processing direct link payment...');
+          
+          try {
+            // 查找套餐信息
+            const packageInfo = CREDIT_PACKAGES.find(pkg => pkg.id === metadata.package_id);
+            if (!packageInfo) {
+              console.error('❌ Package not found:', metadata.package_id);
+              break;
+            }
+
+            // 创建支付记录
+            const paymentRecord = {
+              userId: metadata.user_id,
+              userEmail: metadata.user_email,
+              packageId: metadata.package_id,
+              packageName: packageInfo.name,
+              credits: parseInt(metadata.credits),
+              bonusCredits: packageInfo.bonus || 0,
+              amount: packageInfo.price,
+              currency: packageInfo.currency,
+              status: 'completed',
+              whopPaymentId: eventData.id || `whop_${Date.now()}`,
+              completedAt: new Date(),
+              createdAt: new Date(),
+              updatedAt: new Date()
+            };
+
+            // 保存支付记录
+            const result = await db.collection('payments').insertOne(paymentRecord);
+            console.log('💾 Payment record created:', result.insertedId);
+
+            // 更新用户积分
+            const totalCredits = paymentRecord.credits + paymentRecord.bonusCredits;
+            
+            // 使用 Supabase Admin 更新用户积分
+            const { data: user, error: getUserError } = await supabaseAdmin.auth.admin.getUserById(metadata.user_id);
+            
+            if (getUserError || !user) {
+              console.error('❌ Failed to get user:', getUserError);
+              break;
+            }
+
+            // 更新用户的 user_metadata
+            const currentCredits = user.user.user_metadata?.credits || 0;
+            const newCredits = currentCredits + totalCredits;
+
+            const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
+              metadata.user_id,
+              {
+                user_metadata: {
+                  ...user.user.user_metadata,
+                  credits: newCredits
+                }
+              }
+            );
+
+            if (updateError) {
+              console.error('❌ Failed to update user credits:', updateError);
+            } else {
+              console.log(`✅ User credits updated: ${currentCredits} + ${totalCredits} = ${newCredits}`);
+            }
+
+            console.log('✅ Direct link payment processed successfully');
+            
+          } catch (error) {
+            console.error('❌ Error processing direct link payment:', error);
+          }
+        }
+        // 处理传统支付记录方式（兼容旧方法）
+        else if (metadata.payment_id) {
           const success = await paymentService.completePaymentByMetadata(metadata);
           
           if (success) {
@@ -245,7 +379,7 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
             console.error('❌ Failed to complete payment via metadata');
           }
         } else {
-          // 兼容旧方法
+          // 兼容最旧方法
           const paymentData = eventData;
           const paymentId = paymentData.metadata?.payment_id;
           const whopPaymentId = paymentData.id;
