@@ -5,6 +5,7 @@ import morgan from 'morgan';
 import dotenv from 'dotenv';
 import rateLimit from 'express-rate-limit';
 import session from 'express-session';
+import MongoStore from 'connect-mongo';
 import cookieParser from 'cookie-parser';
 import passport from 'passport';
 import { subscribeRouter } from './routes/subscribe';
@@ -18,6 +19,9 @@ dotenv.config();
 
 const app: Express = express();
 const PORT = process.env.PORT || 8080;
+
+// 信任代理设置 - 修复 X-Forwarded-For 警告
+app.set('trust proxy', 1);
 
 // CORS 配置 - 支持多个来源
 const CORS_ORIGIN_STR = process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:3000';
@@ -49,25 +53,34 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// Session configuration
+// Session configuration with MongoDB store for production
 const SESSION_SECRET = process.env.SESSION_SECRET;
 if (!SESSION_SECRET) {
   throw new Error('SESSION_SECRET environment variable is required');
 }
 
-app.use(
-  session({
-    secret: SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: process.env.NODE_ENV === 'production',
-      httpOnly: true,
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    },
-  })
-);
+// 使用 MongoDB 存储 session（生产环境）
+const sessionConfig: any = {
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+  },
+};
+
+// 在生产环境使用 MongoDB 存储 session
+if (process.env.NODE_ENV === 'production' && process.env.MONGODB_URI) {
+  sessionConfig.store = MongoStore.create({
+    mongoUrl: process.env.MONGODB_URI,
+    touchAfter: 24 * 3600 // lazy session update
+  });
+}
+
+app.use(session(sessionConfig));
 
 // Initialize Passport
 app.use(passport.initialize());
@@ -80,11 +93,17 @@ if (process.env.NODE_ENV !== 'production') {
   app.use(morgan('combined'));
 }
 
-// Rate limiting
+// Rate limiting - 修复 X-Forwarded-For 问题
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.'
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  // 自定义 key generator 来处理代理
+  keyGenerator: (req) => {
+    return req.ip || req.connection.remoteAddress || 'unknown';
+  }
 });
 
 app.use('/api/', limiter);
