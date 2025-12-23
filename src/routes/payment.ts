@@ -249,7 +249,13 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
             userId = eventData.user_id;
             userEmail = eventData.user_email;
           }
-          // 方法3: 从 URL 参数获取
+          // 方法3: 从 eventData.user 对象获取 (Whop标准格式)
+          else if (eventData.user && eventData.user.id && eventData.user.email) {
+            console.log('✅ 从 eventData.user 对象获取用户信息');
+            userId = eventData.user.id;
+            userEmail = eventData.user.email;
+          }
+          // 方法4: 从 URL 参数获取
           else if (eventData.checkout_url || eventData.payment_url) {
             console.log('🔍 尝试从 URL 参数获取用户信息');
             const url = eventData.checkout_url || eventData.payment_url;
@@ -300,6 +306,35 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
           
           console.log('✅ 确认用户信息有效:', { userId, userEmail });
           
+          // 重要：如果获取到的是Whop用户ID，需要通过邮箱查找系统中的用户
+          let systemUserId = userId;
+          
+          // 如果userId看起来像Whop用户ID (以user_开头)，尝试通过邮箱查找系统用户
+          if (userId.startsWith('user_')) {
+            console.log('🔍 检测到Whop用户ID，尝试通过邮箱查找系统用户...');
+            
+            try {
+              // 通过邮箱查找系统中的用户
+              const { data: users, error } = await supabaseAdmin.auth.admin.listUsers();
+              
+              if (!error && users) {
+                const systemUser = users.find((u: any) => u.email === userEmail);
+                if (systemUser) {
+                  systemUserId = systemUser.id;
+                  console.log(`✅ 通过邮箱找到系统用户: ${userEmail} -> ${systemUserId}`);
+                } else {
+                  console.log(`⚠️ 系统中未找到邮箱为 ${userEmail} 的用户`);
+                  // 保持使用Whop用户ID，但记录警告
+                }
+              }
+            } catch (error) {
+              console.error('❌ 查找系统用户失败:', error);
+              // 继续使用Whop用户ID
+            }
+          }
+          
+          console.log('👤 最终使用的用户ID:', systemUserId);
+          
           try {
             // 简化：直接使用固定的套餐信息（因为只有一个套餐）
             const packageInfo = CREDIT_PACKAGES[0]; // 只有一个套餐，直接取第一个
@@ -310,8 +345,9 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
 
             // 创建支付记录
             const paymentRecord = {
-              userId: userId,
+              userId: systemUserId, // 使用系统用户ID
               userEmail: userEmail,
+              whopUserId: userId, // 保存原始Whop用户ID
               packageId: packageInfo.id,
               packageName: packageInfo.name,
               credits: creditsToAdd,
@@ -333,11 +369,11 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
             const totalCredits = creditsToAdd; // 1000积分
             
             // 使用 Supabase Admin 更新用户积分
-            const { data: user, error: getUserError } = await supabaseAdmin.auth.admin.getUserById(userId);
+            const { data: user, error: getUserError } = await supabaseAdmin.auth.admin.getUserById(systemUserId);
             
             if (getUserError || !user) {
               console.error('❌ Failed to get user:', getUserError);
-              console.log('尝试的用户ID:', userId);
+              console.log('尝试的用户ID:', systemUserId);
               
               // 即使获取用户失败，也记录支付成功
               console.log('⚠️ 用户信息获取失败，但支付记录已保存');
@@ -349,7 +385,7 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
             const newCredits = currentCredits + totalCredits;
 
             const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
-              userId,
+              systemUserId,
               {
                 user_metadata: {
                   ...user.user.user_metadata,
