@@ -6,6 +6,61 @@ import { supabaseAdmin } from '../config/supabase';
 
 const router = Router();
 
+// 获取用户积分
+router.get('/user/credits', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        success: false,
+        message: 'No authorization token provided'
+      });
+    }
+
+    const token = authHeader.substring(7);
+
+    // 验证token
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+
+    if (error || !user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid or expired token'
+      });
+    }
+
+    const db = await getDatabase();
+    
+    // 从MongoDB获取用户积分
+    const mongoUser = await db.collection('users').findOne({ 
+      $or: [
+        { user_id: user.id },
+        { email: user.email }
+      ]
+    });
+
+    const credits = mongoUser?.credits || 0;
+
+    res.json({
+      success: true,
+      data: {
+        userId: user.id,
+        email: user.email,
+        credits: credits,
+        lastUpdated: mongoUser?.updatedAt || null
+      }
+    });
+
+  } catch (error) {
+    console.error('Get user credits error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get user credits'
+    });
+  }
+});
+
 // 获取积分套餐列表
 router.get('/packages', async (req: Request, res: Response) => {
   try {
@@ -385,39 +440,65 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
             const result = await db.collection('payments').insertOne(paymentRecord);
             console.log('💾 Payment record created:', result.insertedId);
 
-            // 更新用户积分 - 固定添加1000积分
+            // 更新用户积分到MongoDB - 固定添加1000积分
             const totalCredits = creditsToAdd; // 1000积分
             
-            // 使用 Supabase Admin 更新用户积分
-            const { data: user, error: getUserError } = await supabaseAdmin.auth.admin.getUserById(systemUserId);
-            
-            if (getUserError || !user) {
-              console.error('❌ Failed to get user:', getUserError);
-              console.log('尝试的用户ID:', systemUserId);
+            try {
+              // 首先查找MongoDB中的用户记录
+              const mongoUser = await db.collection('users').findOne({ 
+                $or: [
+                  { _id: systemUserId },
+                  { email: userEmail },
+                  { user_id: systemUserId }
+                ]
+              });
               
-              // 即使获取用户失败，也记录支付成功
-              console.log('⚠️ 用户信息获取失败，但支付记录已保存');
-              break;
-            }
-
-            // 更新用户的 user_metadata
-            const currentCredits = user.user.user_metadata?.credits || 0;
-            const newCredits = currentCredits + totalCredits;
-
-            const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
-              systemUserId,
-              {
-                user_metadata: {
-                  ...user.user.user_metadata,
-                  credits: newCredits
-                }
+              let currentCredits = 0;
+              let newCredits = totalCredits;
+              
+              if (mongoUser) {
+                console.log('✅ 在MongoDB中找到用户记录');
+                currentCredits = mongoUser.credits || 0;
+                newCredits = currentCredits + totalCredits;
+                
+                // 更新现有用户的积分
+                const updateResult = await db.collection('users').updateOne(
+                  { _id: mongoUser._id },
+                  { 
+                    $set: { 
+                      credits: newCredits,
+                      updatedAt: new Date()
+                    }
+                  }
+                );
+                
+                console.log(`✅ MongoDB用户积分已更新: ${currentCredits} + ${totalCredits} = ${newCredits}`);
+                console.log('📊 更新结果:', updateResult.modifiedCount, '条记录被修改');
+              } else {
+                console.log('⚠️ MongoDB中未找到用户记录，创建新的用户记录');
+                
+                // 创建新的用户记录
+                const newUserRecord = {
+                  user_id: systemUserId,
+                  email: userEmail,
+                  credits: totalCredits,
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
+                  source: 'whop_payment'
+                };
+                
+                const insertResult = await db.collection('users').insertOne(newUserRecord);
+                console.log('✅ 新用户记录已创建:', insertResult.insertedId);
+                console.log(`✅ 初始积分设置为: ${totalCredits}`);
+                
+                newCredits = totalCredits;
               }
-            );
-
-            if (updateError) {
-              console.error('❌ Failed to update user credits:', updateError);
-            } else {
-              console.log(`✅ User credits updated: ${currentCredits} + ${totalCredits} = ${newCredits}`);
+              
+              console.log(`💰 最终积分: ${newCredits}`);
+              
+            } catch (mongoError) {
+              console.error('❌ MongoDB积分更新失败:', mongoError);
+              // 继续处理，不中断流程
             }
 
             console.log('✅ Payment.succeeded processed successfully (简化版本)');
