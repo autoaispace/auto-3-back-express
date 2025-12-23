@@ -29,7 +29,7 @@ export class PaymentService {
       packageId: request.packageId,
       packageName: creditPackage.name,
       credits: creditPackage.credits,
-      bonusCredits: creditPackage.bonus || 0,
+      bonusCredits: 0,
       amount: creditPackage.price,
       currency: creditPackage.currency,
       status: PaymentStatus.PENDING,

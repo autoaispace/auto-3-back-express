@@ -30,15 +30,6 @@ export const WHOP_CONFIG = {
 // 积分套餐配置
 export const CREDIT_PACKAGES = [
   {
-    id: 'credits_100',
-    name: '100 积分',
-    credits: 100,
-    price: 1.00,
-    currency: 'USD',
-    description: '基础积分包 - 100积分',
-    popular: false
-  },
-  {
     id: 'credits_1000',
     name: '1000 积分',
     credits: 1000,
@@ -46,16 +37,6 @@ export const CREDIT_PACKAGES = [
     currency: 'USD',
     description: '标准积分包 - 1000积分',
     popular: true
-  },
-  {
-    id: 'credits_15000',
-    name: '15000 积分',
-    credits: 15000,
-    price: 100.00,
-    currency: 'USD',
-    description: '超值积分包 - 15000积分（50%奖励）',
-    popular: false,
-    bonus: 5000 // 额外奖励积分
   }
 ];
 
@@ -94,7 +75,7 @@ export async function createWhopCheckoutConfig(
         user_email: userEmail,
         package_id: packageId,
         credits: pkg.credits.toString(),
-        bonus_credits: (pkg.bonus || 0).toString(),
+        bonus_credits: "0",
         package_name: pkg.name
       }
     };
