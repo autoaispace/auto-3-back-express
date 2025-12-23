@@ -1,6 +1,6 @@
 import { Db, ObjectId } from 'mongodb';
 import { Payment, PaymentStatus, CreatePaymentRequest } from '../models/Payment';
-import { getCreditPackage, createWhopCheckoutSession } from '../config/whop';
+import { getCreditPackage, createWhopCheckoutConfig } from '../config/whop';
 import { CreditsService } from './CreditsService';
 
 export class PaymentService {
@@ -48,19 +48,16 @@ export class PaymentService {
     return createdPayment;
   }
 
-  // 创建 Whop 支付链接
-  async createWhopCheckoutUrl(payment: Payment): Promise<string> {
+  // 创建 Whop 内嵌支付配置
+  async createWhopCheckoutConfig(payment: Payment): Promise<{ sessionId: string; packageInfo: any }> {
     try {
-      console.log('🔄 Creating Whop checkout session for payment:', payment._id);
+      console.log('🔄 Creating Whop checkout config for payment:', payment._id);
 
-      // 使用 Whop API 创建 checkout session
-      const checkoutUrl = await createWhopCheckoutSession(
-        payment._id?.toString() || '',
+      // 使用 Whop API 创建 checkout configuration
+      const { sessionId, packageInfo } = await createWhopCheckoutConfig(
         payment.userId,
         payment.packageId,
-        payment.userEmail,
-        payment.metadata?.successUrl,
-        payment.metadata?.cancelUrl
+        payment.userEmail
       );
 
       // 更新支付记录
@@ -69,14 +66,44 @@ export class PaymentService {
         { _id: new ObjectId(payment._id as string) },
         {
           $set: {
-            whopCheckoutUrl: checkoutUrl,
+            whopSessionId: sessionId,
             updatedAt: new Date()
           }
         }
       );
 
-      console.log('✅ Created Whop checkout URL:', checkoutUrl);
-      return checkoutUrl;
+      console.log('✅ Created Whop checkout config:', sessionId);
+      return { sessionId, packageInfo };
+
+    } catch (error) {
+      console.error('❌ Failed to create Whop checkout config:', error);
+      throw new Error('Failed to create payment configuration');
+    }
+  }
+
+  // 创建 Whop 支付链接 (保持向后兼容)
+  async createWhopCheckoutUrl(payment: Payment): Promise<string> {
+    try {
+      console.log('🔄 Creating Whop checkout session for payment:', payment._id);
+
+      // 对于向后兼容，我们可以返回一个占位符 URL
+      // 实际的内嵌支付不需要 URL，而是使用 session ID
+      const placeholderUrl = `https://whop.com/checkout/${payment._id}`;
+
+      // 更新支付记录
+      const paymentsCollection = this.db.collection<Payment>('payments');
+      await paymentsCollection.updateOne(
+        { _id: new ObjectId(payment._id as string) },
+        {
+          $set: {
+            whopCheckoutUrl: placeholderUrl,
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      console.log('✅ Created placeholder checkout URL:', placeholderUrl);
+      return placeholderUrl;
 
     } catch (error) {
       console.error('❌ Failed to create Whop checkout URL:', error);
