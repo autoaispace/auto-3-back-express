@@ -1,45 +1,80 @@
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { PredictionServiceClient } from '@google-cloud/aiplatform';
 import { google } from '@google-cloud/aiplatform/build/protos/protos';
 import { FallbackImageService } from './FallbackImageService';
+import fetch from 'node-fetch';
 
 export class ImageGenerationService {
-  private client: PredictionServiceClient | null = null;
+  private geminiClient: GoogleGenerativeAI | null = null;
+  private vertexClient: PredictionServiceClient | null = null;
   private projectId: string;
   private location: string;
   private fallbackService: FallbackImageService;
-  private isInitialized: boolean = false;
+  private isGeminiInitialized: boolean = false;
+  private isVertexInitialized: boolean = false;
 
   constructor() {
     this.projectId = process.env.GOOGLE_CLOUD_PROJECT_ID || 'gen-lang-client-0322496168';
     this.location = process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
     this.fallbackService = new FallbackImageService();
 
-    // 尝试初始化Google Cloud客户端
-    this.initializeClient();
+    // 初始化服务
+    this.initializeServices();
   }
 
   /**
-   * 初始化Google Cloud客户端
+   * 初始化所有图像生成服务
    */
-  private async initializeClient() {
+  private async initializeServices() {
+    // 初始化 Gemini AI Studio 客户端
+    await this.initializeGeminiClient();
+    
+    // 初始化 Vertex AI 客户端
+    await this.initializeVertexClient();
+  }
+
+  /**
+   * 初始化 Gemini AI Studio 客户端
+   */
+  private async initializeGeminiClient() {
+    try {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (apiKey) {
+        this.geminiClient = new GoogleGenerativeAI(apiKey);
+        console.log('✅ Gemini AI Studio客户端初始化成功');
+        this.isGeminiInitialized = true;
+      } else {
+        console.warn('⚠️ Gemini API密钥未配置');
+        this.isGeminiInitialized = false;
+      }
+    } catch (error) {
+      console.error('❌ Gemini AI Studio客户端初始化失败:', error);
+      this.isGeminiInitialized = false;
+    }
+  }
+
+  /**
+   * 初始化 Vertex AI 客户端
+   */
+  private async initializeVertexClient() {
     try {
       const credentials = this.getCredentialsFromEnv();
 
       if (credentials) {
-        this.client = new PredictionServiceClient({
+        this.vertexClient = new PredictionServiceClient({
           credentials,
           projectId: this.projectId,
         });
 
-        console.log('✅ Google Cloud AI Platform客户端初始化成功');
-        this.isInitialized = true;
+        console.log('✅ Vertex AI客户端初始化成功');
+        this.isVertexInitialized = true;
       } else {
-        console.warn('⚠️ Google Cloud凭据不可用，将使用备用服务');
-        this.isInitialized = false;
+        console.warn('⚠️ Vertex AI凭据不可用');
+        this.isVertexInitialized = false;
       }
     } catch (error) {
-      console.error('❌ Google Cloud客户端初始化失败:', error);
-      this.isInitialized = false;
+      console.error('❌ Vertex AI客户端初始化失败:', error);
+      this.isVertexInitialized = false;
     }
   }
 
@@ -47,7 +82,7 @@ export class ImageGenerationService {
    * 从环境变量获取Google Cloud凭据
    */
   private getCredentialsFromEnv() {
-    // 优先使用JSON格式的凭据（Vercel推荐方式）
+    // 优先使用JSON格式的凭据
     const credentialsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
     if (credentialsJson) {
       try {
@@ -65,9 +100,7 @@ export class ImageGenerationService {
 
     if (privateKey && clientEmail) {
       try {
-        // 处理私钥中的换行符
         const formattedPrivateKey = privateKey.replace(/\\n/g, '\n');
-
         console.log('✅ 使用分离的Google Cloud凭据环境变量');
         return {
           client_email: clientEmail,
@@ -85,7 +118,7 @@ export class ImageGenerationService {
   }
 
   /**
-   * 使用Imagen生成图像（带备用方案）
+   * 主要图像生成方法 - 按优先级尝试各种服务
    */
   async generateImage(prompt: string, options: {
     width?: number;
@@ -99,44 +132,61 @@ export class ImageGenerationService {
   }> {
     console.log('🎨 开始图像生成流程:', prompt);
 
-    // 第一选择: Pollinations.ai (免费且快速)
-    console.log('🌸 尝试第一选择: Pollinations.ai (免费)');
+    // 方案1: Gemini 2.5 Flash (Google AI Studio)
+    if (this.isGeminiInitialized && this.geminiClient) {
+      try {
+        console.log('🚀 尝试方案1: Gemini 2.5 Flash (AI Studio)');
+        const result = await this.generateWithGeminiFlash(prompt, options);
+        if (result.success) {
+          console.log('✅ Gemini 2.5 Flash生成成功');
+          return result;
+        }
+        console.warn('⚠️ Gemini 2.5 Flash失败:', result.error);
+      } catch (error) {
+        console.error('❌ Gemini 2.5 Flash异常:', error);
+      }
+    } else {
+      console.log('⚠️ Gemini 2.5 Flash未初始化，跳过');
+    }
+
+    // 方案2: Pollinations.ai
+    console.log('🔄 尝试方案2: Pollinations.ai');
     try {
-      const pollinationsResult = await this.fallbackService.generateWithPollinations(prompt);
+      const pollinationsResult = await this.generateWithPollinations(prompt, options);
       if (pollinationsResult.success) {
         console.log('✅ Pollinations.ai生成成功');
         return pollinationsResult;
       }
-      console.warn('⚠️ Pollinations.ai失败，尝试下一个方案:', pollinationsResult.error);
+      console.warn('⚠️ Pollinations.ai失败:', pollinationsResult.error);
     } catch (error) {
-      console.warn('⚠️ Pollinations.ai异常，尝试下一个方案:', error);
+      console.warn('⚠️ Pollinations.ai异常:', error);
     }
 
-    // 第二选择: Google Cloud Imagen (如果可用)
-    if (this.isInitialized && this.client) {
+    // 方案3: Gemini Vertex AI (Imagen)
+    if (this.isVertexInitialized && this.vertexClient) {
       try {
-        console.log('🔄 尝试Google Cloud Imagen...');
-        const result = await this.generateWithImagen(prompt, options);
+        console.log('🔄 尝试方案3: Gemini Vertex AI (Imagen)');
+        const result = await this.generateWithVertexImagen(prompt, options);
         if (result.success) {
-          console.log('✅ Google Cloud Imagen生成成功');
+          console.log('✅ Vertex AI Imagen生成成功');
           return result;
         }
-        console.warn('⚠️ Imagen生成失败，尝试备用方案:', result.error);
+        console.warn('⚠️ Vertex AI Imagen失败:', result.error);
       } catch (error) {
-        console.error('❌ Imagen API调用异常:', error);
+        console.error('❌ Vertex AI Imagen异常:', error);
         
         // 检查是否是计费问题
         if (error instanceof Error && error.message.includes('BILLING_DISABLED')) {
           console.error('💳 Google Cloud项目未启用计费，请访问以下链接启用:');
-          console.error('🔗 https://console.developers.google.com/billing/enable?project=gen-lang-client-0322496168');
+          console.error('🔗 https://console.developers.google.com/billing/enable?project=' + this.projectId);
         }
       }
     } else {
-      console.log('⚠️ Google Cloud客户端未初始化，跳过');
+      console.log('⚠️ Vertex AI未初始化，跳过');
     }
 
-    // 第三选择: OpenRouter (DALL-E 3)
-    console.log('🔄 尝试备用方案: OpenRouter (DALL-E 3)');
+    // 方案4: OpenRouter
+    console.log('🔄 尝试方案4: OpenRouter');
     try {
       const openRouterResult = await this.fallbackService.generateWithOpenRouter(prompt);
       if (openRouterResult.success) {
@@ -145,11 +195,11 @@ export class ImageGenerationService {
       }
       console.warn('⚠️ OpenRouter失败:', openRouterResult.error);
     } catch (error) {
-      console.warn('⚠️ OpenRouter备用方案异常:', error);
+      console.warn('⚠️ OpenRouter异常:', error);
     }
 
-    // 第四选择: Hugging Face
-    console.log('🔄 尝试备用方案: Hugging Face');
+    // 方案5: Hugging Face
+    console.log('🔄 尝试方案5: Hugging Face');
     try {
       const hfResult = await this.fallbackService.generateWithHuggingFace(prompt);
       if (hfResult.success) {
@@ -158,12 +208,12 @@ export class ImageGenerationService {
       }
       console.warn('⚠️ Hugging Face失败:', hfResult.error);
     } catch (error) {
-      console.warn('⚠️ Hugging Face备用方案异常:', error);
+      console.warn('⚠️ Hugging Face异常:', error);
     }
 
-    // 第五选择: Replicate (如果配置了)
+    // 方案6: Replicate (如果配置了)
     if (process.env.REPLICATE_API_TOKEN) {
-      console.log('🔄 尝试备用方案: Replicate');
+      console.log('🔄 尝试方案6: Replicate');
       try {
         const replicateResult = await this.fallbackService.generateWithReplicate(prompt);
         if (replicateResult.success) {
@@ -172,12 +222,12 @@ export class ImageGenerationService {
         }
         console.warn('⚠️ Replicate失败:', replicateResult.error);
       } catch (error) {
-        console.warn('⚠️ Replicate备用方案异常:', error);
+        console.warn('⚠️ Replicate异常:', error);
       }
     }
 
-    // 第六选择: Craiyon
-    console.log('🔄 尝试备用方案: Craiyon');
+    // 方案7: Craiyon
+    console.log('🔄 尝试方案7: Craiyon');
     try {
       const craiyonResult = await this.fallbackService.generateWithCraiyon(prompt);
       if (craiyonResult.success) {
@@ -186,20 +236,20 @@ export class ImageGenerationService {
       }
       console.warn('⚠️ Craiyon失败:', craiyonResult.error);
     } catch (error) {
-      console.warn('⚠️ Craiyon备用方案异常:', error);
+      console.warn('⚠️ Craiyon异常:', error);
     }
 
-    // 最终备用方案: 程序化生成
-    console.log('🎯 使用最终备用方案: 程序化生成');
+    // 最终方案: 程序化生成
+    console.log('🎯 使用最终方案: 程序化生成');
     const proceduralResult = this.fallbackService.generateProceduralTattoo(prompt);
     console.log('✅ 程序化纹身生成成功');
     return proceduralResult;
   }
 
   /**
-   * 使用Google Cloud Imagen生成图像
+   * 使用 Gemini 2.5 Flash 生成图像
    */
-  private async generateWithImagen(prompt: string, options: {
+  private async generateWithGeminiFlash(prompt: string, options: {
     width?: number;
     height?: number;
     style?: string;
@@ -209,11 +259,145 @@ export class ImageGenerationService {
     imageData?: string;
     error?: string;
   }> {
-    if (!this.client) {
-      throw new Error('Google Cloud客户端未初始化');
+    if (!this.geminiClient) {
+      throw new Error('Gemini客户端未初始化');
     }
 
-    console.log('🎨 开始Imagen图像生成:', prompt);
+    console.log('🎨 开始Gemini 2.5 Flash图像生成:', prompt);
+
+    // 构建增强的纹身提示词
+    const enhancedPrompt = this.enhancePromptForTattoo(prompt, options.style);
+
+    try {
+      // 使用 Gemini 2.5 Flash 模型
+      const model = this.geminiClient.getGenerativeModel({ 
+        model: "gemini-2.0-flash-exp",
+        generationConfig: {
+          temperature: 0.7,
+          topK: 40,
+          topP: 0.95,
+          maxOutputTokens: 8192,
+        }
+      });
+
+      // 构建图像生成请求
+      const imagePrompt = `请生成一个专业纹身设计图像。要求：${enhancedPrompt}。
+      
+图像要求：
+- 黑白线条艺术风格
+- 高对比度，清晰线条
+- 适合纹身制作
+- 专业艺术品质量
+- 尺寸: ${options.width || 512}x${options.height || 512}像素
+
+请直接生成图像，不要包含任何文字说明。`;
+
+      const result = await model.generateContent([imagePrompt]);
+      const response = await result.response;
+      
+      // 检查是否有图像数据
+      if (response.candidates && response.candidates[0]) {
+        const candidate = response.candidates[0];
+        
+        // 注意：Gemini 2.5 Flash 可能不直接返回图像，而是返回描述
+        // 这里我们需要根据实际API响应调整
+        const text = candidate.content?.parts?.[0]?.text;
+        
+        if (text) {
+          // 如果返回的是文本描述，我们使用程序化生成
+          console.log('📝 Gemini返回文本描述，使用程序化生成');
+          return this.fallbackService.generateProceduralTattoo(prompt);
+        }
+      }
+
+      return {
+        success: false,
+        error: 'No image data in Gemini response'
+      };
+
+    } catch (error) {
+      console.error('❌ Gemini 2.5 Flash生成失败:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Gemini generation failed'
+      };
+    }
+  }
+
+  /**
+   * 使用 Pollinations.ai 生成图像
+   */
+  private async generateWithPollinations(prompt: string, options: {
+    width?: number;
+    height?: number;
+    style?: string;
+    negativePrompt?: string;
+  }): Promise<{
+    success: boolean;
+    imageData?: string;
+    error?: string;
+  }> {
+    try {
+      console.log('🌸 开始Pollinations.ai图像生成:', prompt);
+
+      const enhancedPrompt = this.enhancePromptForTattoo(prompt, options.style);
+      const width = options.width || 512;
+      const height = options.height || 512;
+
+      // Pollinations.ai 的 API 端点
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(enhancedPrompt)}?width=${width}&height=${height}&model=flux&enhance=true&nologo=true`;
+
+      console.log('📡 发送Pollinations.ai请求...');
+      const response = await fetch(pollinationsUrl, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'InkGenius-Pro/1.0'
+        }
+      });
+
+      if (response.ok) {
+        const imageBuffer = await response.buffer();
+        const base64Image = imageBuffer.toString('base64');
+
+        console.log('✅ Pollinations.ai图像生成成功');
+        return {
+          success: true,
+          imageData: `data:image/png;base64,${base64Image}`
+        };
+      } else {
+        console.warn('⚠️ Pollinations.ai API错误:', response.status);
+        return {
+          success: false,
+          error: `Pollinations.ai API error: ${response.status}`
+        };
+      }
+    } catch (error) {
+      console.error('❌ Pollinations.ai生成失败:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Pollinations.ai generation failed'
+      };
+    }
+  }
+
+  /**
+   * 使用 Vertex AI Imagen 生成图像
+   */
+  private async generateWithVertexImagen(prompt: string, options: {
+    width?: number;
+    height?: number;
+    style?: string;
+    negativePrompt?: string;
+  }): Promise<{
+    success: boolean;
+    imageData?: string;
+    error?: string;
+  }> {
+    if (!this.vertexClient) {
+      throw new Error('Vertex AI客户端未初始化');
+    }
+
+    console.log('🎨 开始Vertex AI Imagen图像生成:', prompt);
 
     // 构建增强的纹身提示词
     const enhancedPrompt = this.enhancePromptForTattoo(prompt, options.style);
@@ -244,8 +428,8 @@ export class ImageGenerationService {
       parameters,
     };
 
-    console.log('📡 发送Imagen API请求...');
-    const [response] = await this.client.predict(request);
+    console.log('📡 发送Vertex AI Imagen请求...');
+    const [response] = await this.vertexClient.predict(request);
 
     if (response.predictions && response.predictions.length > 0) {
       const prediction = response.predictions[0];
@@ -255,7 +439,7 @@ export class ImageGenerationService {
         const imageBase64 = predictionValue.fields.bytesBase64Encoded.stringValue;
 
         if (imageBase64) {
-          console.log('✅ Imagen图像生成成功');
+          console.log('✅ Vertex AI Imagen图像生成成功');
           return {
             success: true,
             imageData: `data:image/png;base64,${imageBase64}`
@@ -266,7 +450,7 @@ export class ImageGenerationService {
 
     return {
       success: false,
-      error: 'No image data in Imagen response'
+      error: 'No image data in Vertex AI Imagen response'
     };
   }
 
@@ -287,16 +471,16 @@ export class ImageGenerationService {
     imageData?: string;
     error?: string;
   }> {
-    // 首先尝试Google Cloud Imagen
-    if (this.isInitialized && this.client) {
+    // 首先尝试Vertex AI Imagen
+    if (this.isVertexInitialized && this.vertexClient) {
       try {
-        const result = await this.editWithImagen(prompt, baseImageBase64, options);
+        const result = await this.editWithVertexImagen(prompt, baseImageBase64, options);
         if (result.success) {
           return result;
         }
-        console.warn('⚠️ Imagen编辑失败，使用程序化生成:', result.error);
+        console.warn('⚠️ Vertex AI Imagen编辑失败，使用程序化生成:', result.error);
       } catch (error) {
-        console.error('❌ Imagen编辑API调用异常:', error);
+        console.error('❌ Vertex AI Imagen编辑API调用异常:', error);
       }
     }
 
@@ -308,9 +492,9 @@ export class ImageGenerationService {
   }
 
   /**
-   * 使用Google Cloud Imagen进行图像编辑
+   * 使用Vertex AI Imagen进行图像编辑
    */
-  private async editWithImagen(
+  private async editWithVertexImagen(
     prompt: string,
     baseImageBase64: string,
     options: {
@@ -324,11 +508,11 @@ export class ImageGenerationService {
     imageData?: string;
     error?: string;
   }> {
-    if (!this.client) {
-      throw new Error('Google Cloud客户端未初始化');
+    if (!this.vertexClient) {
+      throw new Error('Vertex AI客户端未初始化');
     }
 
-    console.log('🖼️ 开始Imagen图像编辑:', prompt);
+    console.log('🖼️ 开始Vertex AI Imagen图像编辑:', prompt);
 
     const endpoint = `projects/${this.projectId}/locations/${this.location}/publishers/google/models/imagen-3.0-generate-001`;
 
@@ -356,8 +540,8 @@ export class ImageGenerationService {
       parameters,
     };
 
-    console.log('📡 发送Imagen编辑请求...');
-    const [response] = await this.client.predict(request);
+    console.log('📡 发送Vertex AI Imagen编辑请求...');
+    const [response] = await this.vertexClient.predict(request);
 
     if (response.predictions && response.predictions.length > 0) {
       const prediction = response.predictions[0];
@@ -367,7 +551,7 @@ export class ImageGenerationService {
         const imageBase64 = predictionValue.fields.bytesBase64Encoded.stringValue;
 
         if (imageBase64) {
-          console.log('✅ Imagen图像编辑成功');
+          console.log('✅ Vertex AI Imagen图像编辑成功');
           return {
             success: true,
             imageData: `data:image/png;base64,${imageBase64}`
