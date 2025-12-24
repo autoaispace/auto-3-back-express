@@ -1,26 +1,78 @@
 import { PredictionServiceClient } from '@google-cloud/aiplatform';
 import { google } from '@google-cloud/aiplatform/build/protos/protos';
-import path from 'path';
+import { FallbackImageService } from './FallbackImageService';
 
 export class ImageGenerationService {
-  private client: PredictionServiceClient;
+  private client: PredictionServiceClient | null = null;
   private projectId: string;
   private location: string;
+  private fallbackService: FallbackImageService;
+  private isInitialized: boolean = false;
 
   constructor() {
     this.projectId = process.env.GOOGLE_CLOUD_PROJECT_ID || 'gen-lang-client-0322496168';
     this.location = process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
+    this.fallbackService = new FallbackImageService();
     
-    // 初始化客户端
-    this.client = new PredictionServiceClient({
-      keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(__dirname, '../../google-cloud-key.json'),
-    });
-    
-    console.log('🎨 ImageGenerationService initialized with project:', this.projectId);
+    // 尝试初始化Google Cloud客户端
+    this.initializeClient();
   }
 
   /**
-   * 使用Imagen生成图像
+   * 初始化Google Cloud客户端
+   */
+  private async initializeClient() {
+    try {
+      const credentials = this.getCredentialsFromEnv();
+      
+      if (credentials) {
+        this.client = new PredictionServiceClient({
+          credentials,
+          projectId: this.projectId,
+        });
+        
+        console.log('✅ Google Cloud AI Platform客户端初始化成功');
+        this.isInitialized = true;
+      } else {
+        console.warn('⚠️ Google Cloud凭据不可用，将使用备用服务');
+        this.isInitialized = false;
+      }
+    } catch (error) {
+      console.error('❌ Google Cloud客户端初始化失败:', error);
+      this.isInitialized = false;
+    }
+  }
+
+  /**
+   * 从环境变量获取Google Cloud凭据
+   */
+  private getCredentialsFromEnv() {
+    const privateKey = process.env.GOOGLE_CLOUD_PRIVATE_KEY;
+    const clientEmail = process.env.GOOGLE_CLOUD_CLIENT_EMAIL;
+    
+    if (!privateKey || !clientEmail) {
+      console.warn('⚠️ Google Cloud凭据环境变量不完整');
+      return null;
+    }
+    
+    try {
+      // 处理私钥中的换行符
+      const formattedPrivateKey = privateKey.replace(/\\n/g, '\n');
+      
+      return {
+        client_email: clientEmail,
+        private_key: formattedPrivateKey,
+        type: 'service_account',
+        project_id: this.projectId,
+      };
+    } catch (error) {
+      console.error('❌ 处理Google Cloud凭据时出错:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 使用Imagen生成图像（带备用方案）
    */
   async generateImage(prompt: string, options: {
     width?: number;
@@ -32,71 +84,122 @@ export class ImageGenerationService {
     imageData?: string;
     error?: string;
   }> {
+    // 首先尝试Google Cloud Imagen
+    if (this.isInitialized && this.client) {
+      try {
+        const result = await this.generateWithImagen(prompt, options);
+        if (result.success) {
+          return result;
+        }
+        console.warn('⚠️ Imagen生成失败，尝试备用方案:', result.error);
+      } catch (error) {
+        console.error('❌ Imagen API调用异常:', error);
+      }
+    }
+    
+    // 备用方案1: 尝试Hugging Face
+    console.log('🔄 尝试备用方案: Hugging Face');
     try {
-      console.log('🎨 开始Imagen图像生成:', prompt);
-      
-      // 构建增强的纹身提示词
-      const enhancedPrompt = this.enhancePromptForTattoo(prompt, options.style);
-      
-      // 构建请求
-      const endpoint = `projects/${this.projectId}/locations/${this.location}/publishers/google/models/imagen-3.0-generate-001`;
-      
-      const instanceValue = {
-        prompt: enhancedPrompt,
-        negativePrompt: options.negativePrompt || "blurry, low quality, distorted, watermark, text, signature, nsfw",
-        sampleCount: 1,
-        aspectRatio: this.getAspectRatio(options.width, options.height),
-        safetyFilterLevel: "block_some",
-        personGeneration: "dont_allow"
-      };
+      const hfResult = await this.fallbackService.generateWithHuggingFace(prompt);
+      if (hfResult.success) {
+        console.log('✅ Hugging Face生成成功');
+        return hfResult;
+      }
+    } catch (error) {
+      console.warn('⚠️ Hugging Face备用方案失败:', error);
+    }
+    
+    // 备用方案2: 尝试Craiyon
+    console.log('🔄 尝试备用方案: Craiyon');
+    try {
+      const craiyonResult = await this.fallbackService.generateWithCraiyon(prompt);
+      if (craiyonResult.success) {
+        console.log('✅ Craiyon生成成功');
+        return craiyonResult;
+      }
+    } catch (error) {
+      console.warn('⚠️ Craiyon备用方案失败:', error);
+    }
+    
+    // 最终备用方案: 程序化生成
+    console.log('🎯 使用最终备用方案: 程序化生成');
+    const proceduralResult = this.fallbackService.generateProceduralTattoo(prompt);
+    console.log('✅ 程序化纹身生成成功');
+    return proceduralResult;
+  }
 
-      const instances = [google.protobuf.Value.fromObject(instanceValue)];
-      const parameters = google.protobuf.Value.fromObject({
-        sampleCount: 1,
-        aspectRatio: this.getAspectRatio(options.width, options.height),
-        safetyFilterLevel: "block_some",
-        personGeneration: "dont_allow"
-      });
+  /**
+   * 使用Google Cloud Imagen生成图像
+   */
+  private async generateWithImagen(prompt: string, options: {
+    width?: number;
+    height?: number;
+    style?: string;
+    negativePrompt?: string;
+  }): Promise<{
+    success: boolean;
+    imageData?: string;
+    error?: string;
+  }> {
+    if (!this.client) {
+      throw new Error('Google Cloud客户端未初始化');
+    }
+    
+    console.log('🎨 开始Imagen图像生成:', prompt);
+    
+    // 构建增强的纹身提示词
+    const enhancedPrompt = this.enhancePromptForTattoo(prompt, options.style);
+    
+    // 构建请求
+    const endpoint = `projects/${this.projectId}/locations/${this.location}/publishers/google/models/imagen-3.0-generate-001`;
+    
+    const instanceValue = {
+      prompt: enhancedPrompt,
+      negativePrompt: options.negativePrompt || "blurry, low quality, distorted, watermark, text, signature, nsfw",
+      sampleCount: 1,
+      aspectRatio: this.getAspectRatio(options.width, options.height),
+      safetyFilterLevel: "block_some",
+      personGeneration: "dont_allow"
+    };
 
-      const request = {
-        endpoint,
-        instances,
-        parameters,
-      };
+    const instances = [google.protobuf.Value.fromObject(instanceValue)];
+    const parameters = google.protobuf.Value.fromObject({
+      sampleCount: 1,
+      aspectRatio: this.getAspectRatio(options.width, options.height),
+      safetyFilterLevel: "block_some",
+      personGeneration: "dont_allow"
+    });
 
-      console.log('📡 发送Imagen API请求...');
-      const [response] = await this.client.predict(request);
+    const request = {
+      endpoint,
+      instances,
+      parameters,
+    };
+
+    console.log('📡 发送Imagen API请求...');
+    const [response] = await this.client.predict(request);
+    
+    if (response.predictions && response.predictions.length > 0) {
+      const prediction = response.predictions[0];
+      const predictionValue = prediction.structValue;
       
-      if (response.predictions && response.predictions.length > 0) {
-        const prediction = response.predictions[0];
-        const predictionValue = prediction.structValue;
+      if (predictionValue && predictionValue.fields && predictionValue.fields.bytesBase64Encoded) {
+        const imageBase64 = predictionValue.fields.bytesBase64Encoded.stringValue;
         
-        if (predictionValue && predictionValue.fields && predictionValue.fields.bytesBase64Encoded) {
-          const imageBase64 = predictionValue.fields.bytesBase64Encoded.stringValue;
-          
-          if (imageBase64) {
-            console.log('✅ Imagen图像生成成功');
-            return {
-              success: true,
-              imageData: `data:image/png;base64,${imageBase64}`
-            };
-          }
+        if (imageBase64) {
+          console.log('✅ Imagen图像生成成功');
+          return {
+            success: true,
+            imageData: `data:image/png;base64,${imageBase64}`
+          };
         }
       }
-      
-      console.warn('⚠️ Imagen API响应中没有图像数据');
-      return {
-        success: false,
-        error: 'No image data in response'
-      };
-      
-    } catch (error) {
-      console.error('❌ Imagen图像生成失败:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Image generation failed'
-      };
     }
+    
+    return {
+      success: false,
+      error: 'No image data in Imagen response'
+    };
   }
 
   /**
@@ -116,68 +219,99 @@ export class ImageGenerationService {
     imageData?: string;
     error?: string;
   }> {
-    try {
-      console.log('🖼️ 开始Imagen图像编辑:', prompt);
-      
-      const endpoint = `projects/${this.projectId}/locations/${this.location}/publishers/google/models/imagen-3.0-generate-001`;
-      
-      const instanceValue = {
-        prompt: `Based on the reference image, create a tattoo design: ${prompt}. Style: ${options.style || 'artistic tattoo design'}`,
-        image: {
-          bytesBase64Encoded: baseImageBase64.replace(/^data:image\/[a-z]+;base64,/, '')
-        },
-        editMode: "inpainting-insert",
-        negativePrompt: "blurry, low quality, distorted, watermark, text, signature, nsfw",
-        sampleCount: 1,
-        guidanceScale: options.strength ? options.strength * 10 : 7.5,
-        seed: Math.floor(Math.random() * 1000000)
-      };
+    // 首先尝试Google Cloud Imagen
+    if (this.isInitialized && this.client) {
+      try {
+        const result = await this.editWithImagen(prompt, baseImageBase64, options);
+        if (result.success) {
+          return result;
+        }
+        console.warn('⚠️ Imagen编辑失败，使用程序化生成:', result.error);
+      } catch (error) {
+        console.error('❌ Imagen编辑API调用异常:', error);
+      }
+    }
+    
+    // 备用方案: 程序化生成
+    console.log('🎯 图生图备用方案: 程序化生成');
+    const proceduralResult = this.fallbackService.generateProceduralTattoo(prompt);
+    console.log('✅ 程序化纹身生成成功');
+    return proceduralResult;
+  }
 
-      const instances = [google.protobuf.Value.fromObject(instanceValue)];
-      const parameters = google.protobuf.Value.fromObject({
-        sampleCount: 1,
-        guidanceScale: options.strength ? options.strength * 10 : 7.5
-      });
+  /**
+   * 使用Google Cloud Imagen进行图像编辑
+   */
+  private async editWithImagen(
+    prompt: string, 
+    baseImageBase64: string, 
+    options: {
+      width?: number;
+      height?: number;
+      style?: string;
+      strength?: number;
+    }
+  ): Promise<{
+    success: boolean;
+    imageData?: string;
+    error?: string;
+  }> {
+    if (!this.client) {
+      throw new Error('Google Cloud客户端未初始化');
+    }
+    
+    console.log('🖼️ 开始Imagen图像编辑:', prompt);
+    
+    const endpoint = `projects/${this.projectId}/locations/${this.location}/publishers/google/models/imagen-3.0-generate-001`;
+    
+    const instanceValue = {
+      prompt: `Based on the reference image, create a tattoo design: ${prompt}. Style: ${options.style || 'artistic tattoo design'}`,
+      image: {
+        bytesBase64Encoded: baseImageBase64.replace(/^data:image\/[a-z]+;base64,/, '')
+      },
+      editMode: "inpainting-insert",
+      negativePrompt: "blurry, low quality, distorted, watermark, text, signature, nsfw",
+      sampleCount: 1,
+      guidanceScale: options.strength ? options.strength * 10 : 7.5,
+      seed: Math.floor(Math.random() * 1000000)
+    };
 
-      const request = {
-        endpoint,
-        instances,
-        parameters,
-      };
+    const instances = [google.protobuf.Value.fromObject(instanceValue)];
+    const parameters = google.protobuf.Value.fromObject({
+      sampleCount: 1,
+      guidanceScale: options.strength ? options.strength * 10 : 7.5
+    });
 
-      console.log('📡 发送Imagen编辑请求...');
-      const [response] = await this.client.predict(request);
+    const request = {
+      endpoint,
+      instances,
+      parameters,
+    };
+
+    console.log('📡 发送Imagen编辑请求...');
+    const [response] = await this.client.predict(request);
+    
+    if (response.predictions && response.predictions.length > 0) {
+      const prediction = response.predictions[0];
+      const predictionValue = prediction.structValue;
       
-      if (response.predictions && response.predictions.length > 0) {
-        const prediction = response.predictions[0];
-        const predictionValue = prediction.structValue;
+      if (predictionValue && predictionValue.fields && predictionValue.fields.bytesBase64Encoded) {
+        const imageBase64 = predictionValue.fields.bytesBase64Encoded.stringValue;
         
-        if (predictionValue && predictionValue.fields && predictionValue.fields.bytesBase64Encoded) {
-          const imageBase64 = predictionValue.fields.bytesBase64Encoded.stringValue;
-          
-          if (imageBase64) {
-            console.log('✅ Imagen图像编辑成功');
-            return {
-              success: true,
-              imageData: `data:image/png;base64,${imageBase64}`
-            };
-          }
+        if (imageBase64) {
+          console.log('✅ Imagen图像编辑成功');
+          return {
+            success: true,
+            imageData: `data:image/png;base64,${imageBase64}`
+          };
         }
       }
-      
-      console.warn('⚠️ Imagen编辑API响应中没有图像数据');
-      return {
-        success: false,
-        error: 'No image data in edit response'
-      };
-      
-    } catch (error) {
-      console.error('❌ Imagen图像编辑失败:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Image editing failed'
-      };
     }
+    
+    return {
+      success: false,
+      error: 'No image data in edit response'
+    };
   }
 
   /**
@@ -243,17 +377,17 @@ export class ImageGenerationService {
    */
   async testConnection(): Promise<boolean> {
     try {
-      console.log('🧪 测试Imagen API连接...');
+      console.log('🧪 测试图像生成服务连接...');
       
       const result = await this.generateImage('test tattoo design', {
         width: 256,
         height: 256
       });
       
-      console.log('✅ Imagen API连接测试完成:', result.success);
+      console.log('✅ 图像生成服务连接测试完成:', result.success);
       return result.success;
     } catch (error) {
-      console.error('❌ Imagen API连接测试失败:', error);
+      console.error('❌ 图像生成服务连接测试失败:', error);
       return false;
     }
   }

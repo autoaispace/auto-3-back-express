@@ -12,6 +12,11 @@ build/
 .env.local
 .env.*.local
 
+# Google Cloud credentials
+google-cloud-key.json
+*.json
+service-account-key.json
+
 # Logs
 logs/
 *.log
