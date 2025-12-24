@@ -55,6 +55,30 @@ export interface ImageToImageRequest {
     style?: string;
 }
 
+// 新增：STENCIL请求接口
+export interface StencilRequest {
+    prompt: string;
+    imageData: string; // base64 encoded image
+    width?: number;
+    height?: number;
+}
+
+// 新增：TRY-ON请求接口
+export interface TryOnRequest {
+    prompt: string;
+    imageData: string; // base64 encoded image
+    width?: number;
+    height?: number;
+}
+
+// 新增：COVER-UP请求接口
+export interface CoverUpRequest {
+    prompt: string;
+    imageData: string; // base64 encoded image
+    width?: number;
+    height?: number;
+}
+
 // API响应接口
 export interface GeminiImageResponse {
     success: boolean;

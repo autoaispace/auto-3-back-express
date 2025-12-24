@@ -3,6 +3,9 @@ import {
   GEMINI_CONFIG, 
   TextToImageRequest, 
   ImageToImageRequest, 
+  StencilRequest,
+  TryOnRequest,
+  CoverUpRequest,
   GeminiImageResponse,
   base64ToBuffer,
   validateImageFormat,
@@ -38,7 +41,6 @@ export class GeminiService {
       const result = await this.imageGenService.generateImage(request.prompt, {
         width: request.width || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_WIDTH,
         height: request.height || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_HEIGHT,
-        style: request.style,
         negativePrompt: request.negativePrompt
       });
 
@@ -61,13 +63,11 @@ export class GeminiService {
         };
       } else {
         console.warn('⚠️ 图像生成失败，使用占位符:', result.error);
-        // 如果真实生成失败，返回增强占位符
         return this.generateFallbackResponse(request, startTime, 'text-to-image');
       }
 
     } catch (error) {
       console.error('❌ 文生图生成失败:', error);
-      // 返回占位符图像而不是错误
       return this.generateFallbackResponse(request, startTime, 'text-to-image');
     }
   }
@@ -99,7 +99,6 @@ export class GeminiService {
         {
           width: request.width || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_WIDTH,
           height: request.height || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_HEIGHT,
-          style: request.style,
           strength: request.strength || 0.7
         }
       );
@@ -133,10 +132,218 @@ export class GeminiService {
   }
 
   /**
+   * STENCIL - 生成纹身模板
+   */
+  async generateStencil(request: StencilRequest): Promise<GeminiImageResponse> {
+    const startTime = Date.now();
+    
+    try {
+      console.log('📋 开始STENCIL生成:', request.prompt);
+      
+      // 验证输入图像
+      const { buffer, mimeType } = base64ToBuffer(request.imageData);
+      
+      if (!validateImageFormat(mimeType)) {
+        throw new Error(`不支持的图像格式: ${mimeType}`);
+      }
+      
+      if (!validateImageSize(buffer)) {
+        throw new Error('图像文件过大');
+      }
+
+      // 构建专门的STENCIL提示词
+      const stencilPrompt = `Create a tattoo stencil based on this image. ${request.prompt}. 
+      Requirements: 
+      - Black and white line art only
+      - Clean, bold outlines suitable for tattoo stenciling
+      - Remove all shading and color
+      - Simplify details for tattoo application
+      - High contrast black lines on white background
+      - Stencil-ready design`;
+
+      // 使用图像编辑功能生成STENCIL
+      const result = await this.imageGenService.editImage(
+        stencilPrompt,
+        request.imageData,
+        {
+          width: request.width || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_WIDTH,
+          height: request.height || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_HEIGHT,
+          strength: 0.8 // 较高的强度以确保转换为模板风格
+        }
+      );
+
+      const generationTime = Date.now() - startTime;
+      
+      if (result.success && result.imageData) {
+        console.log('✅ STENCIL生成成功');
+        return {
+          success: true,
+          imageData: result.imageData,
+          metadata: {
+            model: 'stencil-generator',
+            prompt: request.prompt,
+            generationTime,
+            dimensions: {
+              width: request.width || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_WIDTH,
+              height: request.height || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_HEIGHT
+            }
+          }
+        };
+      } else {
+        console.warn('⚠️ STENCIL生成失败，使用占位符:', result.error);
+        return this.generateFallbackResponse(request, startTime, 'stencil');
+      }
+
+    } catch (error) {
+      console.error('❌ STENCIL生成失败:', error);
+      return this.generateFallbackResponse(request, startTime, 'stencil');
+    }
+  }
+
+  /**
+   * TRY-ON - 生成纹身试穿效果
+   */
+  async generateTryOn(request: TryOnRequest): Promise<GeminiImageResponse> {
+    const startTime = Date.now();
+    
+    try {
+      console.log('👕 开始TRY-ON生成:', request.prompt);
+      
+      // 验证输入图像
+      const { buffer, mimeType } = base64ToBuffer(request.imageData);
+      
+      if (!validateImageFormat(mimeType)) {
+        throw new Error(`不支持的图像格式: ${mimeType}`);
+      }
+      
+      if (!validateImageSize(buffer)) {
+        throw new Error('图像文件过大');
+      }
+
+      // 构建专门的TRY-ON提示词
+      const tryOnPrompt = `Apply this tattoo design to the person in the image: ${request.prompt}. 
+      Requirements:
+      - Realistically place the tattoo on the person's skin
+      - Match skin tone and lighting
+      - Natural tattoo placement and sizing
+      - Maintain realistic skin texture
+      - Show how the tattoo would look when healed
+      - Professional tattoo application appearance`;
+
+      // 使用图像编辑功能生成TRY-ON效果
+      const result = await this.imageGenService.editImage(
+        tryOnPrompt,
+        request.imageData,
+        {
+          width: request.width || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_WIDTH,
+          height: request.height || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_HEIGHT,
+          strength: 0.6 // 中等强度以保持人物特征
+        }
+      );
+
+      const generationTime = Date.now() - startTime;
+      
+      if (result.success && result.imageData) {
+        console.log('✅ TRY-ON生成成功');
+        return {
+          success: true,
+          imageData: result.imageData,
+          metadata: {
+            model: 'try-on-generator',
+            prompt: request.prompt,
+            generationTime,
+            dimensions: {
+              width: request.width || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_WIDTH,
+              height: request.height || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_HEIGHT
+            }
+          }
+        };
+      } else {
+        console.warn('⚠️ TRY-ON生成失败，使用占位符:', result.error);
+        return this.generateFallbackResponse(request, startTime, 'try-on');
+      }
+
+    } catch (error) {
+      console.error('❌ TRY-ON生成失败:', error);
+      return this.generateFallbackResponse(request, startTime, 'try-on');
+    }
+  }
+
+  /**
+   * COVER-UP - 生成纹身遮盖设计
+   */
+  async generateCoverUp(request: CoverUpRequest): Promise<GeminiImageResponse> {
+    const startTime = Date.now();
+    
+    try {
+      console.log('🎭 开始COVER-UP生成:', request.prompt);
+      
+      // 验证输入图像
+      const { buffer, mimeType } = base64ToBuffer(request.imageData);
+      
+      if (!validateImageFormat(mimeType)) {
+        throw new Error(`不支持的图像格式: ${mimeType}`);
+      }
+      
+      if (!validateImageSize(buffer)) {
+        throw new Error('图像文件过大');
+      }
+
+      // 构建专门的COVER-UP提示词
+      const coverUpPrompt = `Design a cover-up tattoo that completely covers the existing tattoo in this image. ${request.prompt}. 
+      Requirements:
+      - Completely cover and hide the old tattoo
+      - Use darker, bolder elements to mask the existing ink
+      - Create a cohesive new design that works with the skin area
+      - Strategic use of black and dark shading
+      - Professional cover-up tattoo techniques
+      - Ensure the new design is larger and darker than the original
+      - Artistic and aesthetically pleasing final result`;
+
+      // 使用图像编辑功能生成COVER-UP设计
+      const result = await this.imageGenService.editImage(
+        coverUpPrompt,
+        request.imageData,
+        {
+          width: request.width || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_WIDTH,
+          height: request.height || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_HEIGHT,
+          strength: 0.9 // 高强度以确保完全覆盖原有纹身
+        }
+      );
+
+      const generationTime = Date.now() - startTime;
+      
+      if (result.success && result.imageData) {
+        console.log('✅ COVER-UP生成成功');
+        return {
+          success: true,
+          imageData: result.imageData,
+          metadata: {
+            model: 'cover-up-generator',
+            prompt: request.prompt,
+            generationTime,
+            dimensions: {
+              width: request.width || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_WIDTH,
+              height: request.height || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_HEIGHT
+            }
+          }
+        };
+      } else {
+        console.warn('⚠️ COVER-UP生成失败，使用占位符:', result.error);
+        return this.generateFallbackResponse(request, startTime, 'cover-up');
+      }
+
+    } catch (error) {
+      console.error('❌ COVER-UP生成失败:', error);
+      return this.generateFallbackResponse(request, startTime, 'cover-up');
+    }
+  }
+
+  /**
    * 生成后备响应（当API调用失败时）
    */
   private generateFallbackResponse(
-    request: TextToImageRequest | ImageToImageRequest, 
+    request: TextToImageRequest | ImageToImageRequest | StencilRequest | TryOnRequest | CoverUpRequest, 
     startTime: number, 
     type: string
   ): GeminiImageResponse {
@@ -145,7 +352,7 @@ export class GeminiService {
     
     return {
       success: true,
-      imageData: this.generateEnhancedPlaceholderImage(prompt, 'Fallback placeholder image', type),
+      imageData: this.generateEnhancedPlaceholderImage(prompt, type),
       metadata: {
         model: 'fallback-generator',
         prompt,
@@ -159,10 +366,20 @@ export class GeminiService {
   }
 
   /**
-   * 生成增强的占位符图像（基于AI描述）
+   * 生成增强的占位符图像
    */
-  private generateEnhancedPlaceholderImage(originalPrompt: string, aiDescription: string, type: string = 'text-to-image'): string {
-    // 创建一个更精美的SVG占位符，包含AI生成的描述
+  private generateEnhancedPlaceholderImage(originalPrompt: string, type: string = 'text-to-image'): string {
+    // 根据不同类型生成不同的图标和标题
+    const typeConfig = {
+      'text-to-image': { icon: '🎨', title: 'Design Generation', color: '#4CAF50' },
+      'image-to-image': { icon: '🖼️', title: 'Image Enhancement', color: '#2196F3' },
+      'stencil': { icon: '📋', title: 'Stencil Creation', color: '#FF9800' },
+      'try-on': { icon: '👕', title: 'Try-On Preview', color: '#9C27B0' },
+      'cover-up': { icon: '🎭', title: 'Cover-Up Design', color: '#F44336' }
+    };
+
+    const config = typeConfig[type as keyof typeof typeConfig] || typeConfig['text-to-image'];
+
     const svg = `
       <svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">
         <defs>
@@ -186,22 +403,27 @@ export class GeminiService {
         <rect width="100%" height="100%" fill="url(#tattooPattern)" opacity="0.1"/>
         
         <!-- 主要设计元素 -->
-        <circle cx="256" cy="180" r="80" fill="none" stroke="#555" stroke-width="3"/>
-        <path d="M 176 180 L 256 100 L 336 180 L 256 260 Z" fill="none" stroke="#777" stroke-width="2"/>
-        <circle cx="256" cy="180" r="40" fill="none" stroke="#999" stroke-width="1"/>
+        <circle cx="256" cy="180" r="80" fill="none" stroke="${config.color}" stroke-width="3"/>
+        <path d="M 176 180 L 256 100 L 336 180 L 256 260 Z" fill="none" stroke="${config.color}" stroke-width="2" opacity="0.7"/>
+        <circle cx="256" cy="180" r="40" fill="none" stroke="${config.color}" stroke-width="1" opacity="0.5"/>
         
         <!-- 装饰性元素 -->
         <path d="M 200 120 Q 256 80 312 120" stroke="#666" stroke-width="2" fill="none"/>
         <path d="M 200 240 Q 256 280 312 240" stroke="#666" stroke-width="2" fill="none"/>
         
-        <!-- 标题 -->
-        <text x="50%" y="320" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-size="20" font-weight="bold" filter="url(#glow)">
-          AI Tattoo Design
+        <!-- 类型图标 -->
+        <text x="50%" y="140" text-anchor="middle" font-size="48" fill="${config.color}" filter="url(#glow)">
+          ${config.icon}
         </text>
         
-        <!-- 类型标识 -->
+        <!-- 标题 -->
+        <text x="50%" y="320" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-size="20" font-weight="bold" filter="url(#glow)">
+          ${config.title}
+        </text>
+        
+        <!-- 副标题 -->
         <text x="50%" y="350" text-anchor="middle" fill="#888" font-family="Arial, sans-serif" font-size="14">
-          ${type === 'text-to-image' ? 'Text-to-Image' : 'Image-to-Image'} • Imagen Powered
+          AI Powered • InkGenius Pro
         </text>
         
         <!-- 原始提示 -->
@@ -212,7 +434,7 @@ export class GeminiService {
         <!-- 底部装饰 -->
         <rect x="50" y="450" width="412" height="2" fill="#333"/>
         <text x="50%" y="480" text-anchor="middle" fill="#555" font-family="monospace" font-size="10">
-          Generated by Google Imagen AI • ${new Date().toLocaleString()}
+          Generated by Gemini AI • ${new Date().toLocaleString()}
         </text>
       </svg>
     `;

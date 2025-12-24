@@ -424,7 +424,515 @@ router.post('/image-to-image-base64', authenticateUser, checkUserCredits, async 
   }
 });
 
-// 获取生成历史
+// STENCIL - 纹身模板生成（图+文生图）
+router.post('/stencil', authenticateUser, checkUserCredits, upload.single('image'), async (req: Request, res: Response) => {
+  try {
+    const { prompt } = req.body;
+    const user = (req as any).user;
+    const imageFile = req.file;
+
+    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Prompt is required'
+      });
+    }
+
+    if (!imageFile) {
+      return res.status(400).json({
+        success: false,
+        message: 'Image file is required'
+      });
+    }
+
+    // 验证图像
+    if (!validateImageSize(imageFile.buffer)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Image file is too large'
+      });
+    }
+
+    console.log('📋 STENCIL请求:', { 
+      userId: user.id, 
+      prompt: prompt.substring(0, 100),
+      imageSize: imageFile.size,
+      imageMimeType: imageFile.mimetype
+    });
+
+    // 将图像转换为base64
+    const imageData = `data:${imageFile.mimetype};base64,${imageFile.buffer.toString('base64')}`;
+
+    // 调用Gemini服务生成纹身模板
+    const result = await geminiService.generateStencil({
+      prompt: prompt.trim(),
+      imageData,
+      width: GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_WIDTH,
+      height: GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_HEIGHT
+    });
+
+    if (!result.success) {
+      return res.status(500).json(result);
+    }
+
+    // 扣除积分
+    try {
+      const newBalance = await deductUserCredits(
+        user.id,
+        user.email,
+        15,
+        `STENCIL生成: ${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}`
+      );
+      
+      if (result.metadata) {
+        result.metadata.creditsUsed = 15;
+        result.metadata.remainingCredits = newBalance;
+      }
+    } catch (creditError) {
+      console.error('❌ 积分扣除失败:', creditError);
+    }
+
+    console.log('✅ STENCIL生成成功');
+    res.json(result);
+
+  } catch (error) {
+    console.error('❌ STENCIL生成失败:', error);
+    res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'STENCIL生成失败'
+    });
+  }
+});
+
+// TRY-ON - 纹身试穿效果（图+文生图）
+router.post('/try-on', authenticateUser, checkUserCredits, upload.single('image'), async (req: Request, res: Response) => {
+  try {
+    const { prompt } = req.body;
+    const user = (req as any).user;
+    const imageFile = req.file;
+
+    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Prompt is required'
+      });
+    }
+
+    if (!imageFile) {
+      return res.status(400).json({
+        success: false,
+        message: 'Image file is required'
+      });
+    }
+
+    // 验证图像
+    if (!validateImageSize(imageFile.buffer)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Image file is too large'
+      });
+    }
+
+    console.log('👕 TRY-ON请求:', { 
+      userId: user.id, 
+      prompt: prompt.substring(0, 100),
+      imageSize: imageFile.size,
+      imageMimeType: imageFile.mimetype
+    });
+
+    // 将图像转换为base64
+    const imageData = `data:${imageFile.mimetype};base64,${imageFile.buffer.toString('base64')}`;
+
+    // 调用Gemini服务生成试穿效果
+    const result = await geminiService.generateTryOn({
+      prompt: prompt.trim(),
+      imageData,
+      width: GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_WIDTH,
+      height: GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_HEIGHT
+    });
+
+    if (!result.success) {
+      return res.status(500).json(result);
+    }
+
+    // 扣除积分
+    try {
+      const newBalance = await deductUserCredits(
+        user.id,
+        user.email,
+        20, // TRY-ON功能更复杂，消耗更多积分
+        `TRY-ON生成: ${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}`
+      );
+      
+      if (result.metadata) {
+        result.metadata.creditsUsed = 20;
+        result.metadata.remainingCredits = newBalance;
+      }
+    } catch (creditError) {
+      console.error('❌ 积分扣除失败:', creditError);
+    }
+
+    console.log('✅ TRY-ON生成成功');
+    res.json(result);
+
+  } catch (error) {
+    console.error('❌ TRY-ON生成失败:', error);
+    res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'TRY-ON生成失败'
+    });
+  }
+});
+
+// COVER-UP - 纹身遮盖设计（图+文生图）
+router.post('/cover-up', authenticateUser, checkUserCredits, upload.single('image'), async (req: Request, res: Response) => {
+  try {
+    const { prompt } = req.body;
+    const user = (req as any).user;
+    const imageFile = req.file;
+
+    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Prompt is required'
+      });
+    }
+
+    if (!imageFile) {
+      return res.status(400).json({
+        success: false,
+        message: 'Image file is required'
+      });
+    }
+
+    // 验证图像
+    if (!validateImageSize(imageFile.buffer)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Image file is too large'
+      });
+    }
+
+    console.log('🎭 COVER-UP请求:', { 
+      userId: user.id, 
+      prompt: prompt.substring(0, 100),
+      imageSize: imageFile.size,
+      imageMimeType: imageFile.mimetype
+    });
+
+    // 将图像转换为base64
+    const imageData = `data:${imageFile.mimetype};base64,${imageFile.buffer.toString('base64')}`;
+
+    // 调用Gemini服务生成遮盖设计
+    const result = await geminiService.generateCoverUp({
+      prompt: prompt.trim(),
+      imageData,
+      width: GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_WIDTH,
+      height: GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_HEIGHT
+    });
+
+    if (!result.success) {
+      return res.status(500).json(result);
+    }
+
+    // 扣除积分
+    try {
+      const newBalance = await deductUserCredits(
+        user.id,
+        user.email,
+        25, // COVER-UP功能最复杂，消耗最多积分
+        `COVER-UP生成: ${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}`
+      );
+      
+      if (result.metadata) {
+        result.metadata.creditsUsed = 25;
+        result.metadata.remainingCredits = newBalance;
+      }
+    } catch (creditError) {
+      console.error('❌ 积分扣除失败:', creditError);
+    }
+
+    console.log('✅ COVER-UP生成成功');
+    res.json(result);
+
+  } catch (error) {
+    console.error('❌ COVER-UP生成失败:', error);
+    res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'COVER-UP生成失败'
+    });
+  }
+});
+
+// STENCIL - base64版本
+router.post('/stencil-base64', authenticateUser, checkUserCredits, async (req: Request, res: Response) => {
+  try {
+    const { prompt, imageData } = req.body;
+    const user = (req as any).user;
+
+    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Prompt is required'
+      });
+    }
+
+    if (!imageData || typeof imageData !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Image data is required'
+      });
+    }
+
+    // 验证base64图像
+    try {
+      const { buffer, mimeType } = base64ToBuffer(imageData);
+      
+      if (!validateImageFormat(mimeType)) {
+        return res.status(400).json({
+          success: false,
+          message: `Unsupported image format: ${mimeType}`
+        });
+      }
+      
+      if (!validateImageSize(buffer)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Image file is too large'
+        });
+      }
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid image data format'
+      });
+    }
+
+    console.log('📋 STENCIL请求(base64):', { 
+      userId: user.id, 
+      prompt: prompt.substring(0, 100)
+    });
+
+    // 调用Gemini服务生成纹身模板
+    const result = await geminiService.generateStencil({
+      prompt: prompt.trim(),
+      imageData,
+      width: GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_WIDTH,
+      height: GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_HEIGHT
+    });
+
+    if (!result.success) {
+      return res.status(500).json(result);
+    }
+
+    // 扣除积分
+    try {
+      const newBalance = await deductUserCredits(
+        user.id,
+        user.email,
+        15,
+        `STENCIL生成: ${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}`
+      );
+      
+      if (result.metadata) {
+        result.metadata.creditsUsed = 15;
+        result.metadata.remainingCredits = newBalance;
+      }
+    } catch (creditError) {
+      console.error('❌ 积分扣除失败:', creditError);
+    }
+
+    console.log('✅ STENCIL生成成功(base64)');
+    res.json(result);
+
+  } catch (error) {
+    console.error('❌ STENCIL生成失败:', error);
+    res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'STENCIL生成失败'
+    });
+  }
+});
+
+// TRY-ON - base64版本
+router.post('/try-on-base64', authenticateUser, checkUserCredits, async (req: Request, res: Response) => {
+  try {
+    const { prompt, imageData } = req.body;
+    const user = (req as any).user;
+
+    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Prompt is required'
+      });
+    }
+
+    if (!imageData || typeof imageData !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Image data is required'
+      });
+    }
+
+    // 验证base64图像
+    try {
+      const { buffer, mimeType } = base64ToBuffer(imageData);
+      
+      if (!validateImageFormat(mimeType)) {
+        return res.status(400).json({
+          success: false,
+          message: `Unsupported image format: ${mimeType}`
+        });
+      }
+      
+      if (!validateImageSize(buffer)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Image file is too large'
+        });
+      }
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid image data format'
+      });
+    }
+
+    console.log('👕 TRY-ON请求(base64):', { 
+      userId: user.id, 
+      prompt: prompt.substring(0, 100)
+    });
+
+    // 调用Gemini服务生成试穿效果
+    const result = await geminiService.generateTryOn({
+      prompt: prompt.trim(),
+      imageData,
+      width: GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_WIDTH,
+      height: GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_HEIGHT
+    });
+
+    if (!result.success) {
+      return res.status(500).json(result);
+    }
+
+    // 扣除积分
+    try {
+      const newBalance = await deductUserCredits(
+        user.id,
+        user.email,
+        20,
+        `TRY-ON生成: ${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}`
+      );
+      
+      if (result.metadata) {
+        result.metadata.creditsUsed = 20;
+        result.metadata.remainingCredits = newBalance;
+      }
+    } catch (creditError) {
+      console.error('❌ 积分扣除失败:', creditError);
+    }
+
+    console.log('✅ TRY-ON生成成功(base64)');
+    res.json(result);
+
+  } catch (error) {
+    console.error('❌ TRY-ON生成失败:', error);
+    res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'TRY-ON生成失败'
+    });
+  }
+});
+
+// COVER-UP - base64版本
+router.post('/cover-up-base64', authenticateUser, checkUserCredits, async (req: Request, res: Response) => {
+  try {
+    const { prompt, imageData } = req.body;
+    const user = (req as any).user;
+
+    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Prompt is required'
+      });
+    }
+
+    if (!imageData || typeof imageData !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Image data is required'
+      });
+    }
+
+    // 验证base64图像
+    try {
+      const { buffer, mimeType } = base64ToBuffer(imageData);
+      
+      if (!validateImageFormat(mimeType)) {
+        return res.status(400).json({
+          success: false,
+          message: `Unsupported image format: ${mimeType}`
+        });
+      }
+      
+      if (!validateImageSize(buffer)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Image file is too large'
+        });
+      }
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid image data format'
+      });
+    }
+
+    console.log('🎭 COVER-UP请求(base64):', { 
+      userId: user.id, 
+      prompt: prompt.substring(0, 100)
+    });
+
+    // 调用Gemini服务生成遮盖设计
+    const result = await geminiService.generateCoverUp({
+      prompt: prompt.trim(),
+      imageData,
+      width: GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_WIDTH,
+      height: GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_HEIGHT
+    });
+
+    if (!result.success) {
+      return res.status(500).json(result);
+    }
+
+    // 扣除积分
+    try {
+      const newBalance = await deductUserCredits(
+        user.id,
+        user.email,
+        25,
+        `COVER-UP生成: ${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}`
+      );
+      
+      if (result.metadata) {
+        result.metadata.creditsUsed = 25;
+        result.metadata.remainingCredits = newBalance;
+      }
+    } catch (creditError) {
+      console.error('❌ 积分扣除失败:', creditError);
+    }
+
+    console.log('✅ COVER-UP生成成功(base64)');
+    res.json(result);
+
+  } catch (error) {
+    console.error('❌ COVER-UP生成失败:', error);
+    res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'COVER-UP生成失败'
+    });
+  }
+});
 router.get('/history', authenticateUser, async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
