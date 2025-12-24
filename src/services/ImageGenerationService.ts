@@ -1,11 +1,9 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { PredictionServiceClient } from '@google-cloud/aiplatform';
 import { google } from '@google-cloud/aiplatform/build/protos/protos';
 import { FallbackImageService } from './FallbackImageService';
 import fetch from 'node-fetch';
 
 export class ImageGenerationService {
-  private geminiClient: GoogleGenerativeAI | null = null;
   private vertexClient: PredictionServiceClient | null = null;
   private projectId: string;
   private location: string;
@@ -26,29 +24,28 @@ export class ImageGenerationService {
    * 初始化所有图像生成服务
    */
   private async initializeServices() {
-    // 初始化 Gemini AI Studio 客户端
-    await this.initializeGeminiClient();
+    // 检查 Gemini API Key
+    this.initializeGeminiClient();
     
     // 初始化 Vertex AI 客户端
     await this.initializeVertexClient();
   }
 
   /**
-   * 初始化 Gemini AI Studio 客户端
+   * 检查 Gemini API Key 是否可用
    */
-  private async initializeGeminiClient() {
+  private initializeGeminiClient() {
     try {
       const apiKey = process.env.GEMINI_API_KEY;
       if (apiKey) {
-        this.geminiClient = new GoogleGenerativeAI(apiKey);
-        console.log('✅ Gemini AI Studio客户端初始化成功');
+        console.log('✅ Gemini API Key已配置');
         this.isGeminiInitialized = true;
       } else {
         console.warn('⚠️ Gemini API密钥未配置');
         this.isGeminiInitialized = false;
       }
     } catch (error) {
-      console.error('❌ Gemini AI Studio客户端初始化失败:', error);
+      console.error('❌ Gemini API Key检查失败:', error);
       this.isGeminiInitialized = false;
     }
   }
@@ -132,11 +129,11 @@ export class ImageGenerationService {
   }> {
     console.log('🎨 开始图像生成流程:', prompt);
 
-    // 方案1: Gemini 2.5 Flash (Google AI Studio)
-    if (this.isGeminiInitialized && this.geminiClient) {
+    // 方案1: Gemini 2.5 Flash (使用 REST API)
+    if (this.isGeminiInitialized) {
       try {
-        console.log('🚀 尝试方案1: Gemini 2.5 Flash (AI Studio)');
-        const result = await this.generateWithGeminiFlash(prompt, options);
+        console.log('🚀 尝试方案1: Gemini 2.5 Flash (REST API)');
+        const result = await this.generateWithGeminiREST(prompt, options);
         if (result.success) {
           console.log('✅ Gemini 2.5 Flash生成成功');
           return result;
@@ -146,13 +143,13 @@ export class ImageGenerationService {
         console.error('❌ Gemini 2.5 Flash异常:', error);
       }
     } else {
-      console.log('⚠️ Gemini 2.5 Flash未初始化，跳过');
+      console.log('⚠️ Gemini API Key未配置，跳过');
     }
 
     // 方案2: Pollinations.ai
     console.log('🔄 尝试方案2: Pollinations.ai');
     try {
-      const pollinationsResult = await this.generateWithPollinations(prompt, options);
+      const pollinationsResult = await this.fallbackService.generateWithPollinations(prompt, options);
       if (pollinationsResult.success) {
         console.log('✅ Pollinations.ai生成成功');
         return pollinationsResult;
@@ -247,9 +244,9 @@ export class ImageGenerationService {
   }
 
   /**
-   * 使用 Gemini 2.5 Flash 生成图像
+   * 使用 Gemini REST API 生成图像
    */
-  private async generateWithGeminiFlash(prompt: string, options: {
+  private async generateWithGeminiREST(prompt: string, options: {
     width?: number;
     height?: number;
     style?: string;
@@ -259,123 +256,72 @@ export class ImageGenerationService {
     imageData?: string;
     error?: string;
   }> {
-    if (!this.geminiClient) {
-      throw new Error('Gemini客户端未初始化');
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error('Gemini API Key未配置');
     }
 
-    console.log('🎨 开始Gemini 2.5 Flash图像生成:', prompt);
+    console.log('🎨 开始Gemini REST API图像生成:', prompt);
 
     // 构建增强的纹身提示词
     const enhancedPrompt = this.enhancePromptForTattoo(prompt, options.style);
 
     try {
-      // 使用 Gemini 2.5 Flash 模型
-      const model = this.geminiClient.getGenerativeModel({ 
-        model: "gemini-2.0-flash-exp",
-        generationConfig: {
-          temperature: 0.7,
-          topK: 40,
-          topP: 0.95,
-          maxOutputTokens: 8192,
-        }
-      });
-
-      // 构建图像生成请求
-      const imagePrompt = `请生成一个专业纹身设计图像。要求：${enhancedPrompt}。
-      
-图像要求：
-- 黑白线条艺术风格
-- 高对比度，清晰线条
-- 适合纹身制作
-- 专业艺术品质量
-- 尺寸: ${options.width || 512}x${options.height || 512}像素
-
-请直接生成图像，不要包含任何文字说明。`;
-
-      const result = await model.generateContent([imagePrompt]);
-      const response = await result.response;
-      
-      // 检查是否有图像数据
-      if (response.candidates && response.candidates[0]) {
-        const candidate = response.candidates[0];
-        
-        // 注意：Gemini 2.5 Flash 可能不直接返回图像，而是返回描述
-        // 这里我们需要根据实际API响应调整
-        const text = candidate.content?.parts?.[0]?.text;
-        
-        if (text) {
-          // 如果返回的是文本描述，我们使用程序化生成
-          console.log('📝 Gemini返回文本描述，使用程序化生成');
-          return this.fallbackService.generateProceduralTattoo(prompt);
-        }
-      }
-
-      return {
-        success: false,
-        error: 'No image data in Gemini response'
-      };
-
-    } catch (error) {
-      console.error('❌ Gemini 2.5 Flash生成失败:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Gemini generation failed'
-      };
-    }
-  }
-
-  /**
-   * 使用 Pollinations.ai 生成图像
-   */
-  private async generateWithPollinations(prompt: string, options: {
-    width?: number;
-    height?: number;
-    style?: string;
-    negativePrompt?: string;
-  }): Promise<{
-    success: boolean;
-    imageData?: string;
-    error?: string;
-  }> {
-    try {
-      console.log('🌸 开始Pollinations.ai图像生成:', prompt);
-
-      const enhancedPrompt = this.enhancePromptForTattoo(prompt, options.style);
-      const width = options.width || 512;
-      const height = options.height || 512;
-
-      // Pollinations.ai 的 API 端点
-      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(enhancedPrompt)}?width=${width}&height=${height}&model=flux&enhance=true&nologo=true`;
-
-      console.log('📡 发送Pollinations.ai请求...');
-      const response = await fetch(pollinationsUrl, {
-        method: 'GET',
+      // 使用 Gemini REST API
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`, {
+        method: 'POST',
         headers: {
-          'User-Agent': 'InkGenius-Pro/1.0'
-        }
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: `请生成一个专业纹身设计的详细描述。要求：${enhancedPrompt}。
+              
+请提供详细的视觉描述，包括：
+- 主要设计元素
+- 线条风格和粗细
+- 构图和布局
+- 艺术风格特点
+- 适合纹身的特征
+
+请用专业的艺术术语描述这个纹身设计。`
+            }]
+          }],
+          generationConfig: {
+            temperature: 0.7,
+            topK: 40,
+            topP: 0.95,
+            maxOutputTokens: 1024,
+          }
+        }),
       });
 
       if (response.ok) {
-        const imageBuffer = await response.buffer();
-        const base64Image = imageBuffer.toString('base64');
-
-        console.log('✅ Pollinations.ai图像生成成功');
-        return {
-          success: true,
-          imageData: `data:image/png;base64,${base64Image}`
-        };
+        const result = await response.json() as any;
+        
+        if (result.candidates && result.candidates[0] && result.candidates[0].content) {
+          const description = result.candidates[0].content.parts[0].text;
+          
+          console.log('📝 Gemini返回纹身设计描述，使用程序化生成');
+          // 使用描述来增强程序化生成
+          return this.fallbackService.generateProceduralTattoo(prompt + ' ' + description);
+        }
       } else {
-        console.warn('⚠️ Pollinations.ai API错误:', response.status);
-        return {
-          success: false,
-          error: `Pollinations.ai API error: ${response.status}`
-        };
+        const errorText = await response.text();
+        console.warn('⚠️ Gemini REST API错误:', response.status, errorText);
       }
-    } catch (error) {
-      console.error('❌ Pollinations.ai生成失败:', error);
+
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Pollinations.ai generation failed'
+        error: 'No valid response from Gemini REST API'
+      };
+
+    } catch (error) {
+      console.error('❌ Gemini REST API生成失败:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Gemini REST API generation failed'
       };
     }
   }
