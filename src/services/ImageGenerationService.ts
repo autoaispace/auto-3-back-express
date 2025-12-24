@@ -13,7 +13,7 @@ export class ImageGenerationService {
     this.projectId = process.env.GOOGLE_CLOUD_PROJECT_ID || 'gen-lang-client-0322496168';
     this.location = process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
     this.fallbackService = new FallbackImageService();
-    
+
     // 尝试初始化Google Cloud客户端
     this.initializeClient();
   }
@@ -24,13 +24,13 @@ export class ImageGenerationService {
   private async initializeClient() {
     try {
       const credentials = this.getCredentialsFromEnv();
-      
+
       if (credentials) {
         this.client = new PredictionServiceClient({
           credentials,
           projectId: this.projectId,
         });
-        
+
         console.log('✅ Google Cloud AI Platform客户端初始化成功');
         this.isInitialized = true;
       } else {
@@ -58,16 +58,16 @@ export class ImageGenerationService {
         console.error('❌ 解析JSON凭据失败:', error);
       }
     }
-    
+
     // 备用方案：使用分离的环境变量
     const privateKey = process.env.GOOGLE_CLOUD_PRIVATE_KEY;
     const clientEmail = process.env.GOOGLE_CLOUD_CLIENT_EMAIL;
-    
+
     if (privateKey && clientEmail) {
       try {
         // 处理私钥中的换行符
         const formattedPrivateKey = privateKey.replace(/\\n/g, '\n');
-        
+
         console.log('✅ 使用分离的Google Cloud凭据环境变量');
         return {
           client_email: clientEmail,
@@ -79,7 +79,7 @@ export class ImageGenerationService {
         console.error('❌ 处理分离的Google Cloud凭据时出错:', error);
       }
     }
-    
+
     console.warn('⚠️ 未找到有效的Google Cloud凭据');
     return null;
   }
@@ -109,7 +109,7 @@ export class ImageGenerationService {
         console.error('❌ Imagen API调用异常:', error);
       }
     }
-    
+
     // 备用方案1: 尝试Hugging Face
     console.log('🔄 尝试备用方案: Hugging Face');
     try {
@@ -121,7 +121,7 @@ export class ImageGenerationService {
     } catch (error) {
       console.warn('⚠️ Hugging Face备用方案失败:', error);
     }
-    
+
     // 备用方案2: 尝试Craiyon
     console.log('🔄 尝试备用方案: Craiyon');
     try {
@@ -133,7 +133,7 @@ export class ImageGenerationService {
     } catch (error) {
       console.warn('⚠️ Craiyon备用方案失败:', error);
     }
-    
+
     // 最终备用方案: 程序化生成
     console.log('🎯 使用最终备用方案: 程序化生成');
     const proceduralResult = this.fallbackService.generateProceduralTattoo(prompt);
@@ -157,15 +157,15 @@ export class ImageGenerationService {
     if (!this.client) {
       throw new Error('Google Cloud客户端未初始化');
     }
-    
+
     console.log('🎨 开始Imagen图像生成:', prompt);
-    
+
     // 构建增强的纹身提示词
     const enhancedPrompt = this.enhancePromptForTattoo(prompt, options.style);
-    
+
     // 构建请求
     const endpoint = `projects/${this.projectId}/locations/${this.location}/publishers/google/models/imagen-3.0-generate-001`;
-    
+
     const instanceValue = {
       prompt: enhancedPrompt,
       negativePrompt: options.negativePrompt || "blurry, low quality, distorted, watermark, text, signature, nsfw",
@@ -191,14 +191,14 @@ export class ImageGenerationService {
 
     console.log('📡 发送Imagen API请求...');
     const [response] = await this.client.predict(request);
-    
+
     if (response.predictions && response.predictions.length > 0) {
       const prediction = response.predictions[0];
       const predictionValue = prediction.structValue;
-      
+
       if (predictionValue && predictionValue.fields && predictionValue.fields.bytesBase64Encoded) {
         const imageBase64 = predictionValue.fields.bytesBase64Encoded.stringValue;
-        
+
         if (imageBase64) {
           console.log('✅ Imagen图像生成成功');
           return {
@@ -208,7 +208,7 @@ export class ImageGenerationService {
         }
       }
     }
-    
+
     return {
       success: false,
       error: 'No image data in Imagen response'
@@ -219,8 +219,8 @@ export class ImageGenerationService {
    * 使用Imagen进行图像编辑（图生图）
    */
   async editImage(
-    prompt: string, 
-    baseImageBase64: string, 
+    prompt: string,
+    baseImageBase64: string,
     options: {
       width?: number;
       height?: number;
@@ -244,7 +244,7 @@ export class ImageGenerationService {
         console.error('❌ Imagen编辑API调用异常:', error);
       }
     }
-    
+
     // 备用方案: 程序化生成
     console.log('🎯 图生图备用方案: 程序化生成');
     const proceduralResult = this.fallbackService.generateProceduralTattoo(prompt);
@@ -256,8 +256,8 @@ export class ImageGenerationService {
    * 使用Google Cloud Imagen进行图像编辑
    */
   private async editWithImagen(
-    prompt: string, 
-    baseImageBase64: string, 
+    prompt: string,
+    baseImageBase64: string,
     options: {
       width?: number;
       height?: number;
@@ -272,11 +272,11 @@ export class ImageGenerationService {
     if (!this.client) {
       throw new Error('Google Cloud客户端未初始化');
     }
-    
+
     console.log('🖼️ 开始Imagen图像编辑:', prompt);
-    
+
     const endpoint = `projects/${this.projectId}/locations/${this.location}/publishers/google/models/imagen-3.0-generate-001`;
-    
+
     const instanceValue = {
       prompt: `Based on the reference image, create a tattoo design: ${prompt}. Style: ${options.style || 'artistic tattoo design'}`,
       image: {
@@ -303,14 +303,14 @@ export class ImageGenerationService {
 
     console.log('📡 发送Imagen编辑请求...');
     const [response] = await this.client.predict(request);
-    
+
     if (response.predictions && response.predictions.length > 0) {
       const prediction = response.predictions[0];
       const predictionValue = prediction.structValue;
-      
+
       if (predictionValue && predictionValue.fields && predictionValue.fields.bytesBase64Encoded) {
         const imageBase64 = predictionValue.fields.bytesBase64Encoded.stringValue;
-        
+
         if (imageBase64) {
           console.log('✅ Imagen图像编辑成功');
           return {
@@ -320,7 +320,7 @@ export class ImageGenerationService {
         }
       }
     }
-    
+
     return {
       success: false,
       error: 'No image data in edit response'
@@ -351,20 +351,20 @@ export class ImageGenerationService {
     };
 
     let enhancedPrompt = prompt;
-    
+
     // 添加纹身相关关键词
     if (!prompt.toLowerCase().includes('tattoo')) {
       enhancedPrompt = `${enhancedPrompt}, ${tattooKeywords.join(', ')}`;
     }
-    
+
     // 添加风格增强
     if (style && styleEnhancements[style as keyof typeof styleEnhancements]) {
       enhancedPrompt = `${enhancedPrompt}, ${styleEnhancements[style as keyof typeof styleEnhancements]}`;
     }
-    
+
     // 添加质量提升关键词
     enhancedPrompt = `${enhancedPrompt}, high quality, detailed, professional, artistic masterpiece`;
-    
+
     return enhancedPrompt;
   }
 
@@ -374,7 +374,7 @@ export class ImageGenerationService {
   private getAspectRatio(width?: number, height?: number): string {
     const w = width || 512;
     const h = height || 512;
-    
+
     if (w === h) return "1:1";
     if (w > h) {
       if (w / h >= 1.7) return "16:9";
@@ -391,12 +391,12 @@ export class ImageGenerationService {
   async testConnection(): Promise<boolean> {
     try {
       console.log('🧪 测试图像生成服务连接...');
-      
+
       const result = await this.generateImage('test tattoo design', {
         width: 256,
         height: 256
       });
-      
+
       console.log('✅ 图像生成服务连接测试完成:', result.success);
       return result.success;
     } catch (error) {

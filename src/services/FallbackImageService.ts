@@ -17,19 +17,20 @@ export class FallbackImageService {
     try {
       console.log('🤗 尝试使用Hugging Face生成图像:', prompt);
       
-      // 使用免费的Stable Diffusion模型
+      // 使用新的API端点
       const response = await fetch(
-        'https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5',
+        'https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev',
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            // 注意：这里需要Hugging Face API token，暂时使用免费版本
+            // 注意：这里可以添加Hugging Face API token以获得更好的服务
+            // 'Authorization': `Bearer ${process.env.HUGGINGFACE_API_TOKEN}`,
           },
           body: JSON.stringify({
-            inputs: `tattoo design, ${prompt}, black and white line art, high quality, detailed`,
+            inputs: `tattoo design, ${prompt}, black and white line art, high quality, detailed, professional tattoo artwork`,
             parameters: {
-              negative_prompt: "blurry, low quality, distorted, nsfw, watermark",
+              negative_prompt: "blurry, low quality, distorted, nsfw, watermark, text, signature",
               num_inference_steps: 20,
               guidance_scale: 7.5,
               width: 512,
