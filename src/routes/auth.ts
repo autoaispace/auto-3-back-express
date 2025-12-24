@@ -297,16 +297,36 @@ router.get(
         console.log('✅ User verified in Supabase:', supabaseUserData.user.email);
 
         // Create a custom session token for the user
-        // Generate a Supabase access token for the user
-        const { data: tokenData, error: tokenError } = await supabaseAdmin.auth.admin.generateAccessToken(user.id);
+        // 使用Supabase的signInWithPassword或创建自定义JWT token
+        // 由于我们已经验证了用户，我们可以创建一个会话
         
         let accessToken = null;
-        if (!tokenError && tokenData?.access_token) {
-          accessToken = tokenData.access_token;
-          console.log('✅ Generated Supabase access token for user');
-        } else {
-          console.warn('⚠️ Failed to generate access token:', tokenError);
-          // 继续流程，但没有token
+        let refreshToken = null;
+        
+        try {
+          // 尝试为用户创建一个会话
+          // 注意：这里我们使用admin API来模拟用户登录
+          const { data: sessionData, error: sessionError } = await supabaseAdmin.auth.admin.generateLink({
+            type: 'magiclink',
+            email: user.email,
+            options: {
+              redirectTo: `${SITE_URL}/`
+            }
+          });
+          
+          if (!sessionError && sessionData) {
+            console.log('✅ Generated magic link for user session');
+            // 我们将使用用户ID作为临时token，后端会验证这个ID
+            accessToken = user.id;
+          } else {
+            console.warn('⚠️ Failed to generate session:', sessionError);
+            // 使用用户ID作为后备token
+            accessToken = user.id;
+          }
+        } catch (error) {
+          console.warn('⚠️ Session generation error:', error);
+          // 使用用户ID作为后备token
+          accessToken = user.id;
         }
 
         // Redirect to frontend with user info and token

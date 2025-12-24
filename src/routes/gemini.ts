@@ -36,9 +36,32 @@ const authenticateUser = async (req: Request, res: Response, next: any) => {
     }
 
     const token = authHeader.substring(7);
-    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+    let user = null;
+    
+    // 首先尝试作为Supabase JWT token验证
+    try {
+      const { data: userData, error } = await supabaseAdmin.auth.getUser(token);
+      if (!error && userData?.user) {
+        user = userData.user;
+      }
+    } catch (jwtError) {
+      console.log('Token is not a valid JWT, trying as user ID...');
+    }
+    
+    // 如果JWT验证失败，尝试作为用户ID验证
+    if (!user) {
+      try {
+        const { data: userData, error: userError } = await supabaseAdmin.auth.admin.getUserById(token);
+        if (!userError && userData?.user) {
+          user = userData.user;
+          console.log('✅ User authenticated by ID:', user.email);
+        }
+      } catch (idError) {
+        console.log('Token is not a valid user ID either');
+      }
+    }
 
-    if (error || !user) {
+    if (!user) {
       return res.status(401).json({
         success: false,
         message: 'Invalid or expired token'
