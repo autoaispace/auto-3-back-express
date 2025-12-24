@@ -297,11 +297,19 @@ router.get(
         console.log('✅ User verified in Supabase:', supabaseUserData.user.email);
 
         // Create a custom session token for the user
-        // In production, you might want to use Supabase's built-in session management
-        // For now, we'll create a simple token and redirect to frontend
-        // Frontend should use this to create a Supabase session
+        // Generate a Supabase access token for the user
+        const { data: tokenData, error: tokenError } = await supabaseAdmin.auth.admin.generateAccessToken(user.id);
+        
+        let accessToken = null;
+        if (!tokenError && tokenData?.access_token) {
+          accessToken = tokenData.access_token;
+          console.log('✅ Generated Supabase access token for user');
+        } else {
+          console.warn('⚠️ Failed to generate access token:', tokenError);
+          // 继续流程，但没有token
+        }
 
-        // Redirect to frontend with user info
+        // Redirect to frontend with user info and token
         // 使用根路径而不是 /auth/success，避免路由冲突
         const redirectUrl = new URL(`${SITE_URL}/`);
 
@@ -317,6 +325,9 @@ router.get(
         redirectUrl.searchParams.set('auth_success', 'true');
         if (user.avatar) {
           redirectUrl.searchParams.set('avatar', encodeURIComponent(user.avatar));
+        }
+        if (accessToken) {
+          redirectUrl.searchParams.set('access_token', accessToken);
         }
 
         console.log('✅ Login successful, redirecting to:', redirectUrl.toString());
