@@ -6,94 +6,94 @@ import fetch from 'node-fetch';
  */
 export class FallbackImageService {
 
-  /**
-   * 使用OpenRouter API生成图像
-   */
-  async generateWithOpenRouter(prompt: string): Promise<{
-    success: boolean;
-    imageData?: string;
-    error?: string;
-  }> {
-    try {
-      console.log('🚀 尝试使用OpenRouter生成图像:', prompt);
-      
-      const apiKey = process.env.OPENROUTER_API_KEY;
-      const baseUrl = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
-      
-      if (!apiKey) {
-        console.warn('⚠️ OpenRouter API密钥未配置');
-        return {
-          success: false,
-          error: 'OpenRouter API key not configured'
-        };
-      }
-      
-      // 使用DALL-E 3模型进行图像生成
-      const response = await fetch(`${baseUrl}/images/generations`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'HTTP-Referer': 'https://inkgenius.digworldai.com',
-          'X-Title': 'InkGenius Pro Tattoo Generator'
-        },
-        body: JSON.stringify({
-          model: 'openai/dall-e-3',
-          prompt: `Create a professional tattoo design: ${prompt}. Style: black and white line art, high contrast, clean lines, tattoo-ready, stencil-friendly, professional tattoo artwork, detailed, artistic masterpiece`,
-          n: 1,
-          size: '1024x1024',
-          quality: 'standard',
-          style: 'natural'
-        }),
-      });
+    /**
+     * 使用OpenRouter API生成图像
+     */
+    async generateWithOpenRouter(prompt: string): Promise<{
+        success: boolean;
+        imageData?: string;
+        error?: string;
+    }> {
+        try {
+            console.log('🚀 尝试使用OpenRouter生成图像:', prompt);
 
-      if (response.ok) {
-        const result = await response.json() as any;
-        
-        if (result.data && result.data.length > 0 && result.data[0].url) {
-          // 下载图像并转换为base64
-          const imageUrl = result.data[0].url;
-          const imageResponse = await fetch(imageUrl);
-          
-          if (imageResponse.ok) {
-            const imageBuffer = await imageResponse.buffer();
-            const base64Image = imageBuffer.toString('base64');
-            
-            console.log('✅ OpenRouter图像生成成功');
+            const apiKey = process.env.OPENROUTER_API_KEY;
+            const baseUrl = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
+
+            if (!apiKey) {
+                console.warn('⚠️ OpenRouter API密钥未配置');
+                return {
+                    success: false,
+                    error: 'OpenRouter API key not configured'
+                };
+            }
+
+            // 使用DALL-E 3模型进行图像生成
+            const response = await fetch(`${baseUrl}/images/generations`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`,
+                    'HTTP-Referer': 'https://inkgenius.digworldai.com',
+                    'X-Title': 'InkGenius Pro Tattoo Generator'
+                },
+                body: JSON.stringify({
+                    model: 'openai/dall-e-3',
+                    prompt: `Create a professional tattoo design: ${prompt}. Style: black and white line art, high contrast, clean lines, tattoo-ready, stencil-friendly, professional tattoo artwork, detailed, artistic masterpiece`,
+                    n: 1,
+                    size: '1024x1024',
+                    quality: 'standard',
+                    style: 'natural'
+                }),
+            });
+
+            if (response.ok) {
+                const result = await response.json() as any;
+
+                if (result.data && result.data.length > 0 && result.data[0].url) {
+                    // 下载图像并转换为base64
+                    const imageUrl = result.data[0].url;
+                    const imageResponse = await fetch(imageUrl);
+
+                    if (imageResponse.ok) {
+                        const imageBuffer = await imageResponse.buffer();
+                        const base64Image = imageBuffer.toString('base64');
+
+                        console.log('✅ OpenRouter图像生成成功');
+                        return {
+                            success: true,
+                            imageData: `data:image/png;base64,${base64Image}`
+                        };
+                    } else {
+                        console.warn('⚠️ 下载OpenRouter生成的图像失败');
+                        return {
+                            success: false,
+                            error: 'Failed to download generated image'
+                        };
+                    }
+                } else {
+                    console.warn('⚠️ OpenRouter API响应中没有图像数据');
+                    return {
+                        success: false,
+                        error: 'No image data in OpenRouter response'
+                    };
+                }
+            } else {
+                const errorText = await response.text();
+                console.warn('⚠️ OpenRouter API错误:', response.status, errorText);
+                return {
+                    success: false,
+                    error: `OpenRouter API error: ${response.status}`
+                };
+            }
+        } catch (error) {
+            console.error('❌ OpenRouter生成失败:', error);
             return {
-              success: true,
-              imageData: `data:image/png;base64,${base64Image}`
+                success: false,
+                error: error instanceof Error ? error.message : 'OpenRouter generation failed'
             };
-          } else {
-            console.warn('⚠️ 下载OpenRouter生成的图像失败');
-            return {
-              success: false,
-              error: 'Failed to download generated image'
-            };
-          }
-        } else {
-          console.warn('⚠️ OpenRouter API响应中没有图像数据');
-          return {
-            success: false,
-            error: 'No image data in OpenRouter response'
-          };
         }
-      } else {
-        const errorText = await response.text();
-        console.warn('⚠️ OpenRouter API错误:', response.status, errorText);
-        return {
-          success: false,
-          error: `OpenRouter API error: ${response.status}`
-        };
-      }
-    } catch (error) {
-      console.error('❌ OpenRouter生成失败:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'OpenRouter generation failed'
-      };
     }
-  }
 
     /**
      * 使用Hugging Face Inference API生成图像
