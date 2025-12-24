@@ -206,11 +206,10 @@ router.post('/text-to-image', authenticateUser, checkUserCredits, async (req: Re
         `文生图生成: ${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}`
       );
       
-      result.metadata = {
-        ...result.metadata,
-        creditsUsed: 10,
-        remainingCredits: newBalance
-      };
+      if (result.metadata) {
+        result.metadata.creditsUsed = 10;
+        result.metadata.remainingCredits = newBalance;
+      }
     } catch (creditError) {
       console.error('❌ 积分扣除失败:', creditError);
       // 继续返回结果，但记录错误
@@ -290,11 +289,10 @@ router.post('/image-to-image', authenticateUser, checkUserCredits, upload.single
         `图生图生成: ${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}`
       );
       
-      result.metadata = {
-        ...result.metadata,
-        creditsUsed: 15,
-        remainingCredits: newBalance
-      };
+      if (result.metadata) {
+        result.metadata.creditsUsed = 15;
+        result.metadata.remainingCredits = newBalance;
+      }
     } catch (creditError) {
       console.error('❌ 积分扣除失败:', creditError);
     }
@@ -383,11 +381,10 @@ router.post('/image-to-image-base64', authenticateUser, checkUserCredits, async 
         `图生图生成: ${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}`
       );
       
-      result.metadata = {
-        ...result.metadata,
-        creditsUsed: 15,
-        remainingCredits: newBalance
-      };
+      if (result.metadata) {
+        result.metadata.creditsUsed = 15;
+        result.metadata.remainingCredits = newBalance;
+      }
     } catch (creditError) {
       console.error('❌ 积分扣除失败:', creditError);
     }
