@@ -1,9 +1,11 @@
+import { GoogleGenAI } from '@google/genai';
 import { PredictionServiceClient } from '@google-cloud/aiplatform';
 import { google } from '@google-cloud/aiplatform/build/protos/protos';
 import { FallbackImageService } from './FallbackImageService';
 import fetch from 'node-fetch';
 
 export class ImageGenerationService {
+  private geminiClient: GoogleGenAI | null = null;
   private vertexClient: PredictionServiceClient | null = null;
   private projectId: string;
   private location: string;
@@ -24,7 +26,7 @@ export class ImageGenerationService {
    * 初始化所有图像生成服务
    */
   private async initializeServices() {
-    // 检查 Gemini API Key
+    // 初始化 Gemini 图像生成客户端
     this.initializeGeminiClient();
     
     // 初始化 Vertex AI 客户端
@@ -32,20 +34,23 @@ export class ImageGenerationService {
   }
 
   /**
-   * 检查 Gemini API Key 是否可用
+   * 初始化 Gemini 图像生成客户端
    */
   private initializeGeminiClient() {
     try {
       const apiKey = process.env.GEMINI_API_KEY;
       if (apiKey) {
-        console.log('✅ Gemini API Key已配置');
+        this.geminiClient = new GoogleGenAI({
+          apiKey: apiKey
+        });
+        console.log('✅ Gemini 图像生成客户端初始化成功');
         this.isGeminiInitialized = true;
       } else {
         console.warn('⚠️ Gemini API密钥未配置');
         this.isGeminiInitialized = false;
       }
     } catch (error) {
-      console.error('❌ Gemini API Key检查失败:', error);
+      console.error('❌ Gemini 图像生成客户端初始化失败:', error);
       this.isGeminiInitialized = false;
     }
   }
@@ -129,21 +134,21 @@ export class ImageGenerationService {
   }> {
     console.log('🎨 开始图像生成流程:', prompt);
 
-    // 方案1: Gemini 2.5 Flash (使用 REST API)
-    if (this.isGeminiInitialized) {
+    // 方案1: Gemini 2.5 Flash Image (原生图像生成)
+    if (this.isGeminiInitialized && this.geminiClient) {
       try {
-        console.log('🚀 尝试方案1: Gemini 2.5 Flash (REST API)');
-        const result = await this.generateWithGeminiREST(prompt, options);
+        console.log('🚀 尝试方案1: Gemini 2.5 Flash Image (原生图像生成)');
+        const result = await this.generateWithGeminiImage(prompt, options);
         if (result.success) {
-          console.log('✅ Gemini 2.5 Flash生成成功');
+          console.log('✅ Gemini 2.5 Flash Image生成成功');
           return result;
         }
-        console.warn('⚠️ Gemini 2.5 Flash失败:', result.error);
+        console.warn('⚠️ Gemini 2.5 Flash Image失败:', result.error);
       } catch (error) {
-        console.error('❌ Gemini 2.5 Flash异常:', error);
+        console.error('❌ Gemini 2.5 Flash Image异常:', error);
       }
     } else {
-      console.log('⚠️ Gemini API Key未配置，跳过');
+      console.log('⚠️ Gemini 图像生成客户端未初始化，跳过');
     }
 
     // 方案2: Pollinations.ai
@@ -244,9 +249,9 @@ export class ImageGenerationService {
   }
 
   /**
-   * 使用 Gemini REST API 生成图像
+   * 使用 Gemini 2.5 Flash Image 原生图像生成
    */
-  private async generateWithGeminiREST(prompt: string, options: {
+  private async generateWithGeminiImage(prompt: string, options: {
     width?: number;
     height?: number;
     style?: string;
@@ -256,72 +261,70 @@ export class ImageGenerationService {
     imageData?: string;
     error?: string;
   }> {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error('Gemini API Key未配置');
+    if (!this.geminiClient) {
+      throw new Error('Gemini客户端未初始化');
     }
 
-    console.log('🎨 开始Gemini REST API图像生成:', prompt);
+    console.log('🎨 开始Gemini 2.5 Flash Image原生图像生成:', prompt);
 
     // 构建增强的纹身提示词
     const enhancedPrompt = this.enhancePromptForTattoo(prompt, options.style);
 
     try {
-      // 使用 Gemini REST API
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{
-              text: `请生成一个专业纹身设计的详细描述。要求：${enhancedPrompt}。
-              
-请提供详细的视觉描述，包括：
-- 主要设计元素
-- 线条风格和粗细
-- 构图和布局
-- 艺术风格特点
-- 适合纹身的特征
-
-请用专业的艺术术语描述这个纹身设计。`
-            }]
-          }],
-          generationConfig: {
-            temperature: 0.7,
-            topK: 40,
-            topP: 0.95,
-            maxOutputTokens: 1024,
-          }
-        }),
+      // 使用 Gemini 2.5 Flash Image 模型进行图像生成
+      const response = await this.geminiClient.models.generateContent({
+        model: "gemini-2.5-flash-image",
+        contents: enhancedPrompt,
       });
 
-      if (response.ok) {
-        const result = await response.json() as any;
+      // 检查响应中是否有图像数据
+      if (response.candidates && response.candidates.length > 0) {
+        const candidate = response.candidates[0];
         
-        if (result.candidates && result.candidates[0] && result.candidates[0].content) {
-          const description = result.candidates[0].content.parts[0].text;
-          
-          console.log('📝 Gemini返回纹身设计描述，使用程序化生成');
-          // 使用描述来增强程序化生成
-          return this.fallbackService.generateProceduralTattoo(prompt + ' ' + description);
+        if (candidate.content && candidate.content.parts) {
+          for (const part of candidate.content.parts) {
+            // 检查是否有内联图像数据
+            if (part.inlineData && part.inlineData.data) {
+              const imageData = part.inlineData.data;
+              const mimeType = part.inlineData.mimeType || 'image/png';
+              
+              console.log('✅ Gemini 2.5 Flash Image生成成功');
+              return {
+                success: true,
+                imageData: `data:${mimeType};base64,${imageData}`
+              };
+            }
+            
+            // 如果有文本响应，记录下来
+            if (part.text) {
+              console.log('📝 Gemini返回文本描述:', part.text.substring(0, 100) + '...');
+            }
+          }
         }
-      } else {
-        const errorText = await response.text();
-        console.warn('⚠️ Gemini REST API错误:', response.status, errorText);
       }
 
       return {
         success: false,
-        error: 'No valid response from Gemini REST API'
+        error: 'No image data in Gemini 2.5 Flash Image response'
       };
 
     } catch (error) {
-      console.error('❌ Gemini REST API生成失败:', error);
+      console.error('❌ Gemini 2.5 Flash Image生成失败:', error);
+      
+      // 检查是否是配额问题
+      if (error instanceof Error) {
+        if (error.message.includes('quota') || error.message.includes('429')) {
+          console.warn('⚠️ Gemini 图像生成配额用完，将尝试其他方案');
+          return {
+            success: false,
+            error: 'Gemini image generation quota exceeded'
+          };
+        }
+      }
+      
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Gemini REST API generation failed'
+        error: error instanceof Error ? error.message : 'Gemini 2.5 Flash Image generation failed'
       };
     }
   }
@@ -517,17 +520,17 @@ export class ImageGenerationService {
    */
   private enhancePromptForTattoo(prompt: string, style?: string): string {
     const tattooKeywords = [
-      'tattoo design',
+      'professional tattoo design',
       'black and white line art',
       'high contrast',
       'clean lines',
       'tattoo-ready',
       'stencil-friendly',
-      'professional tattoo artwork'
+      'detailed artwork'
     ];
 
     const styleEnhancements = {
-      'traditional': 'traditional tattoo style, bold outlines, limited color palette, classic American tattoo',
+      'traditional': 'traditional tattoo style, bold outlines, classic American tattoo design',
       'realistic': 'photorealistic tattoo design, detailed shading, lifelike, hyperrealistic',
       'minimalist': 'minimalist tattoo design, simple lines, clean aesthetic, geometric simplicity',
       'geometric': 'geometric tattoo design, precise lines, mathematical patterns, sacred geometry',
@@ -535,12 +538,10 @@ export class ImageGenerationService {
       'blackwork': 'blackwork tattoo design, solid black areas, high contrast, bold silhouettes'
     };
 
-    let enhancedPrompt = prompt;
+    let enhancedPrompt = `Create a ${prompt}`;
 
     // 添加纹身相关关键词
-    if (!prompt.toLowerCase().includes('tattoo')) {
-      enhancedPrompt = `${enhancedPrompt}, ${tattooKeywords.join(', ')}`;
-    }
+    enhancedPrompt = `${enhancedPrompt}, ${tattooKeywords.join(', ')}`;
 
     // 添加风格增强
     if (style && styleEnhancements[style as keyof typeof styleEnhancements]) {
