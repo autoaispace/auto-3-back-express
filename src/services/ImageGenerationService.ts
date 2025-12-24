@@ -110,7 +110,19 @@ export class ImageGenerationService {
       }
     }
 
-    // 备用方案1: 尝试Hugging Face
+    // 备用方案1: 尝试OpenRouter (DALL-E 3)
+    console.log('🔄 尝试备用方案: OpenRouter (DALL-E 3)');
+    try {
+      const openRouterResult = await this.fallbackService.generateWithOpenRouter(prompt);
+      if (openRouterResult.success) {
+        console.log('✅ OpenRouter生成成功');
+        return openRouterResult;
+      }
+    } catch (error) {
+      console.warn('⚠️ OpenRouter备用方案失败:', error);
+    }
+
+    // 备用方案2: 尝试Hugging Face
     console.log('🔄 尝试备用方案: Hugging Face');
     try {
       const hfResult = await this.fallbackService.generateWithHuggingFace(prompt);
@@ -122,7 +134,7 @@ export class ImageGenerationService {
       console.warn('⚠️ Hugging Face备用方案失败:', error);
     }
 
-    // 备用方案2: 尝试Craiyon
+    // 备用方案3: 尝试Craiyon
     console.log('🔄 尝试备用方案: Craiyon');
     try {
       const craiyonResult = await this.fallbackService.generateWithCraiyon(prompt);
