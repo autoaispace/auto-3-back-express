@@ -6,6 +6,67 @@ import { supabaseAdmin } from '../config/supabase';
 
 const router = Router();
 
+// 获取用户积分交易记录
+router.get('/user/credit-transactions', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const offset = parseInt(req.query.offset as string) || 0;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        success: false,
+        message: 'No authorization token provided'
+      });
+    }
+
+    const token = authHeader.substring(7);
+
+    // 验证token
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+
+    if (error || !user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid or expired token'
+      });
+    }
+
+    const db = await getDatabase();
+    
+    // 获取用户的积分交易记录
+    const transactions = await db.collection('credit_transactions')
+      .find({ user_id: user.id })
+      .sort({ createdAt: -1 })
+      .skip(offset)
+      .limit(limit)
+      .toArray();
+
+    // 获取总数
+    const total = await db.collection('credit_transactions').countDocuments({ user_id: user.id });
+
+    res.json({
+      success: true,
+      data: {
+        transactions: transactions,
+        pagination: {
+          total: total,
+          limit: limit,
+          offset: offset,
+          hasMore: offset + limit < total
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Get credit transactions error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get credit transactions'
+    });
+  }
+});
+
 // 获取用户积分
 router.get('/user/credits', async (req: Request, res: Response) => {
   try {
@@ -32,15 +93,27 @@ router.get('/user/credits', async (req: Request, res: Response) => {
 
     const db = await getDatabase();
     
-    // 从MongoDB获取用户积分
-    const mongoUser = await db.collection('users').findOne({ 
-      $or: [
-        { user_id: user.id },
-        { email: user.email }
-      ]
+    // 从MongoDB的user_credits表获取用户积分
+    const userCredits = await db.collection('user_credits').findOne({ 
+      user_id: user.id
     });
 
-    const credits = mongoUser?.credits || 0;
+    // 如果user_credits表中没有记录，尝试从users表获取（兜底）
+    let credits = userCredits?.balance || 0;
+    let lastUpdated = userCredits?.updatedAt || null;
+    
+    if (!userCredits) {
+      console.log('⚠️ user_credits表中未找到记录，尝试从users表获取');
+      const mongoUser = await db.collection('users').findOne({ 
+        $or: [
+          { user_id: user.id },
+          { email: user.email }
+        ]
+      });
+      
+      credits = mongoUser?.credits || 0;
+      lastUpdated = mongoUser?.updatedAt || null;
+    }
 
     res.json({
       success: true,
@@ -48,7 +121,8 @@ router.get('/user/credits', async (req: Request, res: Response) => {
         userId: user.id,
         email: user.email,
         credits: credits,
-        lastUpdated: mongoUser?.updatedAt || null
+        lastUpdated: lastUpdated,
+        source: userCredits ? 'user_credits' : 'users'
       }
     });
 
@@ -440,11 +514,11 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
             const result = await db.collection('payments').insertOne(paymentRecord);
             console.log('💾 Payment record created:', result.insertedId);
 
-            // 更新用户积分到MongoDB - 固定添加1000积分
+            // 更新用户积分到MongoDB - 完整的积分管理系统
             const totalCredits = creditsToAdd; // 1000积分
             
             try {
-              // 首先查找MongoDB中的用户记录
+              // 1. 更新或创建 users 表记录
               const mongoUser = await db.collection('users').findOne({ 
                 $or: [
                   { _id: systemUserId },
@@ -472,8 +546,8 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
                   }
                 );
                 
-                console.log(`✅ MongoDB用户积分已更新: ${currentCredits} + ${totalCredits} = ${newCredits}`);
-                console.log('📊 更新结果:', updateResult.modifiedCount, '条记录被修改');
+                console.log(`✅ users表积分已更新: ${currentCredits} + ${totalCredits} = ${newCredits}`);
+                console.log('📊 users表更新结果:', updateResult.modifiedCount, '条记录被修改');
               } else {
                 console.log('⚠️ MongoDB中未找到用户记录，创建新的用户记录');
                 
@@ -494,10 +568,81 @@ router.post('/webhook/whop', async (req: Request, res: Response) => {
                 newCredits = totalCredits;
               }
               
-              console.log(`💰 最终积分: ${newCredits}`);
+              // 2. 更新或创建 user_credits 表记录
+              console.log('🔄 更新 user_credits 表...');
+              
+              const userCreditsRecord = await db.collection('user_credits').findOne({
+                user_id: systemUserId
+              });
+              
+              if (userCreditsRecord) {
+                // 更新现有积分记录
+                const currentBalance = userCreditsRecord.balance || 0;
+                const newBalance = currentBalance + totalCredits;
+                
+                const creditsUpdateResult = await db.collection('user_credits').updateOne(
+                  { user_id: systemUserId },
+                  {
+                    $set: {
+                      balance: newBalance,
+                      updatedAt: new Date()
+                    }
+                  }
+                );
+                
+                console.log(`✅ user_credits表已更新: ${currentBalance} + ${totalCredits} = ${newBalance}`);
+                console.log('📊 user_credits表更新结果:', creditsUpdateResult.modifiedCount, '条记录被修改');
+              } else {
+                // 创建新的积分记录
+                const newCreditsRecord = {
+                  user_id: systemUserId,
+                  email: userEmail,
+                  balance: totalCredits,
+                  total_earned: totalCredits,
+                  total_spent: 0,
+                  createdAt: new Date(),
+                  updatedAt: new Date()
+                };
+                
+                const creditsInsertResult = await db.collection('user_credits').insertOne(newCreditsRecord);
+                console.log('✅ user_credits表新记录已创建:', creditsInsertResult.insertedId);
+                console.log(`✅ 初始余额设置为: ${totalCredits}`);
+              }
+              
+              // 3. 创建 credit_transactions 交易记录
+              console.log('🔄 创建积分交易记录...');
+              
+              const transactionRecord = {
+                user_id: systemUserId,
+                email: userEmail,
+                type: 'credit', // 积分增加
+                amount: totalCredits,
+                balance_before: currentCredits,
+                balance_after: newCredits,
+                source: 'whop_payment',
+                source_id: eventData.id, // Whop支付ID
+                description: `Whop支付充值 - ${packageInfo.name}`,
+                metadata: {
+                  whop_payment_id: eventData.id,
+                  whop_user_id: userId,
+                  package_id: packageInfo.id,
+                  package_name: packageInfo.name,
+                  payment_amount: packageInfo.price,
+                  currency: packageInfo.currency
+                },
+                status: 'completed',
+                createdAt: new Date(),
+                updatedAt: new Date()
+              };
+              
+              const transactionResult = await db.collection('credit_transactions').insertOne(transactionRecord);
+              console.log('✅ credit_transactions表记录已创建:', transactionResult.insertedId);
+              console.log(`📝 交易记录: +${totalCredits} 积分 (${currentCredits} → ${newCredits})`);
+              
+              console.log(`💰 积分管理完成 - 最终积分: ${newCredits}`);
               
             } catch (mongoError) {
-              console.error('❌ MongoDB积分更新失败:', mongoError);
+              console.error('❌ MongoDB积分管理失败:', mongoError);
               // 继续处理，不中断流程
             }
 
