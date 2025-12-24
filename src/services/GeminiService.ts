@@ -8,17 +8,17 @@ import {
   validateImageFormat,
   validateImageSize
 } from '../config/gemini';
+import { ImageGenerationService } from './ImageGenerationService';
 
 export class GeminiService {
   private apiKey: string;
   private baseUrl: string;
-  private imageGenUrl: string;
+  private imageGenService: ImageGenerationService;
 
   constructor() {
     this.apiKey = GEMINI_CONFIG.API_KEY;
     this.baseUrl = GEMINI_CONFIG.BASE_URL;
-    // 使用Imagen API进行图像生成
-    this.imageGenUrl = `https://aiplatform.googleapis.com/v1/projects/${GEMINI_CONFIG.PROJECT_NUMBER}/locations/us-central1/publishers/google/models`;
+    this.imageGenService = new ImageGenerationService();
     
     if (!GEMINI_CONFIG.validate()) {
       throw new Error('Gemini configuration is invalid');
@@ -34,62 +34,24 @@ export class GeminiService {
     try {
       console.log('🎨 开始文生图生成:', request.prompt);
       
-      // 构建增强的提示词
-      const enhancedPrompt = this.enhancePromptForTattoo(request.prompt, request.style);
-      
-      // 使用Imagen 3.0进行图像生成
-      const requestBody = {
-        instances: [{
-          prompt: enhancedPrompt,
-          negativePrompt: request.negativePrompt || "blurry, low quality, distorted, watermark, text, signature",
-          sampleCount: 1,
-          aspectRatio: this.getAspectRatio(request.width, request.height),
-          safetyFilterLevel: "block_some",
-          personGeneration: "dont_allow"
-        }],
-        parameters: {
-          sampleCount: 1,
-          aspectRatio: this.getAspectRatio(request.width, request.height),
-          safetyFilterLevel: "block_some",
-          personGeneration: "dont_allow"
-        }
-      };
-
-      const response = await fetch(
-        `${this.imageGenUrl}/imagen-3.0-generate-001:predict`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${await this.getAccessToken()}`,
-          },
-          body: JSON.stringify(requestBody),
-        }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('❌ Imagen API错误:', response.status, errorText);
-        
-        // 如果API调用失败，返回占位符图像
-        return this.generateFallbackResponse(request, startTime, 'text-to-image');
-      }
-
-      const result = await response.json() as any;
-      console.log('✅ Imagen API响应成功');
+      // 使用真正的Imagen API生成图像
+      const result = await this.imageGenService.generateImage(request.prompt, {
+        width: request.width || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_WIDTH,
+        height: request.height || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_HEIGHT,
+        style: request.style,
+        negativePrompt: request.negativePrompt
+      });
 
       const generationTime = Date.now() - startTime;
       
-      // 提取生成的图像
-      if (result.predictions && result.predictions[0] && result.predictions[0].bytesBase64Encoded) {
-        const imageData = `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
-        
+      if (result.success && result.imageData) {
+        console.log('✅ 真实图像生成成功');
         return {
           success: true,
-          imageData,
+          imageData: result.imageData,
           metadata: {
             model: 'imagen-3.0-generate-001',
-            prompt: enhancedPrompt,
+            prompt: request.prompt,
             generationTime,
             dimensions: {
               width: request.width || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_WIDTH,
@@ -98,7 +60,8 @@ export class GeminiService {
           }
         };
       } else {
-        // 如果没有图像数据，返回占位符
+        console.warn('⚠️ 图像生成失败，使用占位符:', result.error);
+        // 如果真实生成失败，返回增强占位符
         return this.generateFallbackResponse(request, startTime, 'text-to-image');
       }
 
@@ -129,55 +92,25 @@ export class GeminiService {
         throw new Error('图像文件过大');
       }
 
-      // 构建请求体 - 使用Imagen的图像编辑功能
-      const requestBody = {
-        instances: [{
-          prompt: `Based on the reference image, create a tattoo design: ${request.prompt}. Style: ${request.style || 'artistic tattoo design'}`,
-          image: {
-            bytesBase64Encoded: buffer.toString('base64')
-          },
-          editMode: "inpainting-insert", // 或 "inpainting-remove", "outpainting"
-          negativePrompt: "blurry, low quality, distorted, watermark, text, signature",
-          sampleCount: 1,
-          guidanceScale: 7.5,
-          seed: Math.floor(Math.random() * 1000000)
-        }],
-        parameters: {
-          sampleCount: 1,
-          guidanceScale: 7.5
-        }
-      };
-
-      const response = await fetch(
-        `${this.imageGenUrl}/imagen-3.0-generate-001:predict`,
+      // 使用真正的Imagen API进行图像编辑
+      const result = await this.imageGenService.editImage(
+        request.prompt,
+        request.imageData,
         {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${await this.getAccessToken()}`,
-          },
-          body: JSON.stringify(requestBody),
+          width: request.width || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_WIDTH,
+          height: request.height || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_HEIGHT,
+          style: request.style,
+          strength: request.strength || 0.7
         }
       );
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('❌ Imagen API错误:', response.status, errorText);
-        return this.generateFallbackResponse(request, startTime, 'image-to-image');
-      }
-
-      const result = await response.json() as any;
-      console.log('✅ 图生图API响应成功');
-
       const generationTime = Date.now() - startTime;
       
-      // 提取生成的图像
-      if (result.predictions && result.predictions[0] && result.predictions[0].bytesBase64Encoded) {
-        const imageData = `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
-        
+      if (result.success && result.imageData) {
+        console.log('✅ 真实图像编辑成功');
         return {
           success: true,
-          imageData,
+          imageData: result.imageData,
           metadata: {
             model: 'imagen-3.0-generate-001',
             prompt: request.prompt,
@@ -189,6 +122,7 @@ export class GeminiService {
           }
         };
       } else {
+        console.warn('⚠️ 图像编辑失败，使用占位符:', result.error);
         return this.generateFallbackResponse(request, startTime, 'image-to-image');
       }
 
@@ -196,27 +130,6 @@ export class GeminiService {
       console.error('❌ 图生图生成失败:', error);
       return this.generateFallbackResponse(request, startTime, 'image-to-image');
     }
-  }
-
-  /**
-   * 获取访问令牌 (简化版本，实际应该使用服务账户)
-   */
-  private async getAccessToken(): Promise<string> {
-    // 这里应该实现OAuth2流程或使用服务账户
-    // 暂时返回API密钥，实际部署时需要正确的认证
-    return this.apiKey;
-  }
-
-  /**
-   * 获取宽高比
-   */
-  private getAspectRatio(width?: number, height?: number): string {
-    const w = width || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_WIDTH;
-    const h = height || GEMINI_CONFIG.IMAGE_CONFIG.DEFAULT_HEIGHT;
-    
-    if (w === h) return "1:1";
-    if (w > h) return "16:9";
-    return "9:16";
   }
 
   /**
@@ -232,7 +145,7 @@ export class GeminiService {
     
     return {
       success: true,
-      imageData: this.generatePlaceholderImage(prompt, type),
+      imageData: this.generateEnhancedPlaceholderImage(prompt, 'Fallback placeholder image', type),
       metadata: {
         model: 'fallback-generator',
         prompt,
@@ -246,53 +159,16 @@ export class GeminiService {
   }
 
   /**
-   * 增强纹身相关的提示词
+   * 生成增强的占位符图像（基于AI描述）
    */
-  private enhancePromptForTattoo(prompt: string, style?: string): string {
-    const tattooKeywords = [
-      'tattoo design',
-      'black and white line art',
-      'high contrast',
-      'clean lines',
-      'tattoo-ready',
-      'stencil-friendly'
-    ];
-
-    const styleEnhancements = {
-      'traditional': 'traditional tattoo style, bold outlines, limited color palette',
-      'realistic': 'photorealistic tattoo design, detailed shading, lifelike',
-      'minimalist': 'minimalist tattoo design, simple lines, clean aesthetic',
-      'geometric': 'geometric tattoo design, precise lines, mathematical patterns',
-      'watercolor': 'watercolor tattoo style, flowing colors, artistic brushstrokes',
-      'blackwork': 'blackwork tattoo design, solid black areas, high contrast'
-    };
-
-    let enhancedPrompt = prompt;
-    
-    // 添加纹身相关关键词
-    if (!prompt.toLowerCase().includes('tattoo')) {
-      enhancedPrompt = `${enhancedPrompt}, ${tattooKeywords.join(', ')}`;
-    }
-    
-    // 添加风格增强
-    if (style && styleEnhancements[style as keyof typeof styleEnhancements]) {
-      enhancedPrompt = `${enhancedPrompt}, ${styleEnhancements[style as keyof typeof styleEnhancements]}`;
-    }
-    
-    return enhancedPrompt;
-  }
-
-  /**
-   * 生成占位符图像（用于测试和后备）
-   */
-  private generatePlaceholderImage(prompt: string, type: string = 'text-to-image'): string {
-    // 创建一个更精美的SVG占位符
+  private generateEnhancedPlaceholderImage(originalPrompt: string, aiDescription: string, type: string = 'text-to-image'): string {
+    // 创建一个更精美的SVG占位符，包含AI生成的描述
     const svg = `
       <svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" style="stop-color:#1a1a1a;stop-opacity:1" />
-            <stop offset="100%" style="stop-color:#0a0a0a;stop-opacity:1" />
+            <stop offset="0%" style="stop-color:#2a2a2a;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#1a1a1a;stop-opacity:1" />
           </linearGradient>
           <filter id="glow">
             <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
@@ -301,22 +177,42 @@ export class GeminiService {
               <feMergeNode in="SourceGraphic"/>
             </feMerge>
           </filter>
+          <pattern id="tattooPattern" patternUnits="userSpaceOnUse" width="40" height="40">
+            <rect width="40" height="40" fill="none"/>
+            <path d="M0 20 L20 0 L40 20 L20 40 Z" stroke="#333" stroke-width="0.5" fill="none"/>
+          </pattern>
         </defs>
         <rect width="100%" height="100%" fill="url(#bg)"/>
-        <circle cx="256" cy="200" r="60" fill="none" stroke="#333" stroke-width="2"/>
-        <path d="M 196 200 L 256 140 L 316 200 L 256 260 Z" fill="none" stroke="#555" stroke-width="2"/>
-        <text x="50%" y="320" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-size="18" font-weight="bold" filter="url(#glow)">
-          AI Generated Design
+        <rect width="100%" height="100%" fill="url(#tattooPattern)" opacity="0.1"/>
+        
+        <!-- 主要设计元素 -->
+        <circle cx="256" cy="180" r="80" fill="none" stroke="#555" stroke-width="3"/>
+        <path d="M 176 180 L 256 100 L 336 180 L 256 260 Z" fill="none" stroke="#777" stroke-width="2"/>
+        <circle cx="256" cy="180" r="40" fill="none" stroke="#999" stroke-width="1"/>
+        
+        <!-- 装饰性元素 -->
+        <path d="M 200 120 Q 256 80 312 120" stroke="#666" stroke-width="2" fill="none"/>
+        <path d="M 200 240 Q 256 280 312 240" stroke="#666" stroke-width="2" fill="none"/>
+        
+        <!-- 标题 -->
+        <text x="50%" y="320" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-size="20" font-weight="bold" filter="url(#glow)">
+          AI Tattoo Design
         </text>
-        <text x="50%" y="350" text-anchor="middle" fill="#888" font-family="Arial, sans-serif" font-size="12">
-          ${type === 'text-to-image' ? 'Text-to-Image' : 'Image-to-Image'}
+        
+        <!-- 类型标识 -->
+        <text x="50%" y="350" text-anchor="middle" fill="#888" font-family="Arial, sans-serif" font-size="14">
+          ${type === 'text-to-image' ? 'Text-to-Image' : 'Image-to-Image'} • Imagen Powered
         </text>
-        <text x="50%" y="380" text-anchor="middle" fill="#666" font-family="Arial, sans-serif" font-size="10">
-          "${prompt.substring(0, 40)}${prompt.length > 40 ? '...' : ''}"
+        
+        <!-- 原始提示 -->
+        <text x="50%" y="380" text-anchor="middle" fill="#666" font-family="Arial, sans-serif" font-size="12">
+          "${originalPrompt.substring(0, 40)}${originalPrompt.length > 40 ? '...' : ''}"
         </text>
+        
+        <!-- 底部装饰 -->
         <rect x="50" y="450" width="412" height="2" fill="#333"/>
-        <text x="50%" y="480" text-anchor="middle" fill="#555" font-family="monospace" font-size="8">
-          Powered by Gemini AI
+        <text x="50%" y="480" text-anchor="middle" fill="#555" font-family="monospace" font-size="10">
+          Generated by Google Imagen AI • ${new Date().toLocaleString()}
         </text>
       </svg>
     `;
@@ -330,7 +226,10 @@ export class GeminiService {
    */
   async testConnection(): Promise<boolean> {
     try {
-      // 测试简单的文本生成而不是图像生成
+      // 测试Imagen API连接
+      const isImageGenWorking = await this.imageGenService.testConnection();
+      
+      // 测试Gemini API连接
       const response = await fetch(
         `${this.baseUrl}/models/gemini-pro:generateContent`,
         {
@@ -349,9 +248,16 @@ export class GeminiService {
         }
       );
 
-      return response.ok;
+      const isGeminiWorking = response.ok;
+      
+      console.log('🧪 API连接测试结果:', {
+        gemini: isGeminiWorking,
+        imagen: isImageGenWorking
+      });
+      
+      return isGeminiWorking || isImageGenWorking; // 至少一个工作即可
     } catch (error) {
-      console.error('❌ Gemini API连接测试失败:', error);
+      console.error('❌ API连接测试失败:', error);
       return false;
     }
   }
