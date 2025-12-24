@@ -97,20 +97,45 @@ export class ImageGenerationService {
     imageData?: string;
     error?: string;
   }> {
-    // 首先尝试Google Cloud Imagen
+    console.log('🎨 开始图像生成流程:', prompt);
+
+    // 第一选择: Pollinations.ai (免费且快速)
+    console.log('🌸 尝试第一选择: Pollinations.ai (免费)');
+    try {
+      const pollinationsResult = await this.fallbackService.generateWithPollinations(prompt);
+      if (pollinationsResult.success) {
+        console.log('✅ Pollinations.ai生成成功');
+        return pollinationsResult;
+      }
+      console.warn('⚠️ Pollinations.ai失败，尝试下一个方案:', pollinationsResult.error);
+    } catch (error) {
+      console.warn('⚠️ Pollinations.ai异常，尝试下一个方案:', error);
+    }
+
+    // 第二选择: Google Cloud Imagen (如果可用)
     if (this.isInitialized && this.client) {
       try {
+        console.log('🔄 尝试Google Cloud Imagen...');
         const result = await this.generateWithImagen(prompt, options);
         if (result.success) {
+          console.log('✅ Google Cloud Imagen生成成功');
           return result;
         }
         console.warn('⚠️ Imagen生成失败，尝试备用方案:', result.error);
       } catch (error) {
         console.error('❌ Imagen API调用异常:', error);
+        
+        // 检查是否是计费问题
+        if (error instanceof Error && error.message.includes('BILLING_DISABLED')) {
+          console.error('💳 Google Cloud项目未启用计费，请访问以下链接启用:');
+          console.error('🔗 https://console.developers.google.com/billing/enable?project=gen-lang-client-0322496168');
+        }
       }
+    } else {
+      console.log('⚠️ Google Cloud客户端未初始化，跳过');
     }
 
-    // 备用方案1: 尝试OpenRouter (DALL-E 3)
+    // 第三选择: OpenRouter (DALL-E 3)
     console.log('🔄 尝试备用方案: OpenRouter (DALL-E 3)');
     try {
       const openRouterResult = await this.fallbackService.generateWithOpenRouter(prompt);
@@ -118,11 +143,12 @@ export class ImageGenerationService {
         console.log('✅ OpenRouter生成成功');
         return openRouterResult;
       }
+      console.warn('⚠️ OpenRouter失败:', openRouterResult.error);
     } catch (error) {
-      console.warn('⚠️ OpenRouter备用方案失败:', error);
+      console.warn('⚠️ OpenRouter备用方案异常:', error);
     }
 
-    // 备用方案2: 尝试Hugging Face
+    // 第四选择: Hugging Face
     console.log('🔄 尝试备用方案: Hugging Face');
     try {
       const hfResult = await this.fallbackService.generateWithHuggingFace(prompt);
@@ -130,11 +156,27 @@ export class ImageGenerationService {
         console.log('✅ Hugging Face生成成功');
         return hfResult;
       }
+      console.warn('⚠️ Hugging Face失败:', hfResult.error);
     } catch (error) {
-      console.warn('⚠️ Hugging Face备用方案失败:', error);
+      console.warn('⚠️ Hugging Face备用方案异常:', error);
     }
 
-    // 备用方案3: 尝试Craiyon
+    // 第五选择: Replicate (如果配置了)
+    if (process.env.REPLICATE_API_TOKEN) {
+      console.log('🔄 尝试备用方案: Replicate');
+      try {
+        const replicateResult = await this.fallbackService.generateWithReplicate(prompt);
+        if (replicateResult.success) {
+          console.log('✅ Replicate生成成功');
+          return replicateResult;
+        }
+        console.warn('⚠️ Replicate失败:', replicateResult.error);
+      } catch (error) {
+        console.warn('⚠️ Replicate备用方案异常:', error);
+      }
+    }
+
+    // 第六选择: Craiyon
     console.log('🔄 尝试备用方案: Craiyon');
     try {
       const craiyonResult = await this.fallbackService.generateWithCraiyon(prompt);
@@ -142,8 +184,9 @@ export class ImageGenerationService {
         console.log('✅ Craiyon生成成功');
         return craiyonResult;
       }
+      console.warn('⚠️ Craiyon失败:', craiyonResult.error);
     } catch (error) {
-      console.warn('⚠️ Craiyon备用方案失败:', error);
+      console.warn('⚠️ Craiyon备用方案异常:', error);
     }
 
     // 最终备用方案: 程序化生成
