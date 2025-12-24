@@ -47,28 +47,41 @@ export class ImageGenerationService {
    * 从环境变量获取Google Cloud凭据
    */
   private getCredentialsFromEnv() {
+    // 优先使用JSON格式的凭据（Vercel推荐方式）
+    const credentialsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+    if (credentialsJson) {
+      try {
+        const credentials = JSON.parse(credentialsJson);
+        console.log('✅ 使用JSON格式的Google Cloud凭据');
+        return credentials;
+      } catch (error) {
+        console.error('❌ 解析JSON凭据失败:', error);
+      }
+    }
+    
+    // 备用方案：使用分离的环境变量
     const privateKey = process.env.GOOGLE_CLOUD_PRIVATE_KEY;
     const clientEmail = process.env.GOOGLE_CLOUD_CLIENT_EMAIL;
     
-    if (!privateKey || !clientEmail) {
-      console.warn('⚠️ Google Cloud凭据环境变量不完整');
-      return null;
+    if (privateKey && clientEmail) {
+      try {
+        // 处理私钥中的换行符
+        const formattedPrivateKey = privateKey.replace(/\\n/g, '\n');
+        
+        console.log('✅ 使用分离的Google Cloud凭据环境变量');
+        return {
+          client_email: clientEmail,
+          private_key: formattedPrivateKey,
+          type: 'service_account',
+          project_id: this.projectId,
+        };
+      } catch (error) {
+        console.error('❌ 处理分离的Google Cloud凭据时出错:', error);
+      }
     }
     
-    try {
-      // 处理私钥中的换行符
-      const formattedPrivateKey = privateKey.replace(/\\n/g, '\n');
-      
-      return {
-        client_email: clientEmail,
-        private_key: formattedPrivateKey,
-        type: 'service_account',
-        project_id: this.projectId,
-      };
-    } catch (error) {
-      console.error('❌ 处理Google Cloud凭据时出错:', error);
-      return null;
-    }
+    console.warn('⚠️ 未找到有效的Google Cloud凭据');
+    return null;
   }
 
   /**
